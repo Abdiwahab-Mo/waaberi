@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: waaberi
+      POSTGRES_PASSWORD: waaberi
+      POSTGRES_DB: waaberi
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U waaberi"]
+      interval: 2s
+      retries: 30
+
+  api:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      UPLOAD_DIR: /app/uploads
+    volumes: [uploads:/app/uploads]   # uploaded images survive rebuilds
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on: [api]
+    ports: ["3000:80"]   # Website: http://localhost:3000   Admin: http://localhost:3000/admin
+
+volumes:
+  pgdata:
+  uploads:
