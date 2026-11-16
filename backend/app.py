@@ -1,11 +1,14 @@
 import os, re, time, uuid, datetime as dt
 from functools import wraps
+from io import BytesIO
 import jwt, requests
+import qrcode
+import qrcode.image.svg
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from email_validator import validate_email, EmailNotValidError
@@ -31,6 +34,108 @@ class Member(db.Model):  # mailing list / "Join us"
     created_at = db.Column(db.DateTime, default=dt.datetime.utcnow)
 
 
+class Country(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+
+    def to_dict(self):
+        return {"id": self.id, "name": self.name}
+
+
+class State(db.Model):  # "administrative area" per party constitution
+    id = db.Column(db.Integer, primary_key=True)
+    country_id = db.Column(db.Integer, db.ForeignKey("country.id"), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+
+    def to_dict(self):
+        return {"id": self.id, "country_id": self.country_id, "name": self.name}
+
+
+class Region(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    state_id = db.Column(db.Integer, db.ForeignKey("state.id"), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+
+    def to_dict(self):
+        return {"id": self.id, "state_id": self.state_id, "name": self.name}
+
+
+class City(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    region_id = db.Column(db.Integer, db.ForeignKey("region.id"), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+
+    def to_dict(self):
+        return {"id": self.id, "region_id": self.region_id, "name": self.name}
+
+
+class District(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    city_id = db.Column(db.Integer, db.ForeignKey("city.id"), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+
+    def to_dict(self):
+        return {"id": self.id, "city_id": self.city_id, "name": self.name}
+
+
+MEMBERSHIP_STATUSES = ("pending", "under_review", "approved", "rejected", "suspended", "expired")
+
+
+class PartyMember(db.Model):  # a verified, approved party member (distinct from the mailing-list Member)
+    id = db.Column(db.Integer, primary_key=True)
+    membership_id = db.Column(db.String(20), unique=True)  # e.g. "WB-2026-000123", set on approval
+    first_name = db.Column(db.String(80), nullable=False)
+    middle_name = db.Column(db.String(80))
+    last_name = db.Column(db.String(80), nullable=False)
+    gender = db.Column(db.String(10))
+    date_of_birth = db.Column(db.Date)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    phone = db.Column(db.String(32), nullable=False)
+    alt_phone = db.Column(db.String(32))
+    photo_url = db.Column(db.String(500))
+    country_id = db.Column(db.Integer, db.ForeignKey("country.id"), nullable=False)
+    state_id = db.Column(db.Integer, db.ForeignKey("state.id"), nullable=False)
+    region_id = db.Column(db.Integer, db.ForeignKey("region.id"), nullable=False)
+    city_id = db.Column(db.Integer, db.ForeignKey("city.id"), nullable=False)
+    district_id = db.Column(db.Integer, db.ForeignKey("district.id"))  # optional, finest level
+    membership_type = db.Column(db.String(40))
+    occupation = db.Column(db.String(120))
+    agreed_to_terms = db.Column(db.Boolean, default=False, nullable=False)
+    consent_data_processing = db.Column(db.Boolean, default=False, nullable=False)
+    status = db.Column(db.String(20), default="pending", nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=dt.datetime.utcnow)
+    reviewed_at = db.Column(db.DateTime)
+    reviewed_by = db.Column(db.Integer, db.ForeignKey("admin.id"))
+    password_hash = db.Column(db.String(255))  # null until an admin sets a portal password
+    verification_token = db.Column(db.String(32), unique=True)  # set at approval, alongside membership_id
+
+    def to_dict(self):
+        return {"id": self.id, "membership_id": self.membership_id,
+                "first_name": self.first_name, "middle_name": self.middle_name, "last_name": self.last_name,
+                "gender": self.gender, "date_of_birth": self.date_of_birth.isoformat() if self.date_of_birth else None,
+                "email": self.email, "phone": self.phone, "alt_phone": self.alt_phone, "photo_url": self.photo_url,
+                "country_id": self.country_id, "state_id": self.state_id, "region_id": self.region_id,
+                "city_id": self.city_id, "district_id": self.district_id,
+                "membership_type": self.membership_type, "occupation": self.occupation,
+                "status": self.status, "created_at": self.created_at.isoformat(),
+                "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+                "has_password": bool(self.password_hash)}
+
+
+class MemberLocationHistory(db.Model):  # written whenever an approved member's location is corrected
+    id = db.Column(db.Integer, primary_key=True)
+    member_id = db.Column(db.Integer, db.ForeignKey("party_member.id"), nullable=False)
+    old_region_id = db.Column(db.Integer)
+    new_region_id = db.Column(db.Integer)
+    old_city_id = db.Column(db.Integer)
+    new_city_id = db.Column(db.Integer)
+    old_district_id = db.Column(db.Integer)
+    new_district_id = db.Column(db.Integer)
+    reason = db.Column(db.String(300), nullable=False)
+    changed_by = db.Column(db.Integer, db.ForeignKey("admin.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=dt.datetime.utcnow)
+
+
 class Post(db.Model):  # campaigns + news & statements
     id = db.Column(db.Integer, primary_key=True)
     kind = db.Column(db.String(20), nullable=False, index=True)  # campaign | news | statement
@@ -43,6 +148,15 @@ class Post(db.Model):  # campaigns + news & statements
     def to_dict(self):
         return {"id": self.id, "kind": self.kind, "title": self.title, "summary": self.summary,
                 "image_url": self.image_url, "published_at": self.published_at.isoformat(), "i18n": self.i18n or {}}
+
+
+class LoginAttempt(db.Model):  # one row per login POST (admin or member); success flag doubles as the activity log
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    ip = db.Column(db.String(45))
+    success = db.Column(db.Boolean, default=False, nullable=False)
+    kind = db.Column(db.String(10), default="admin", nullable=False)  # "admin" | "member"
+    created_at = db.Column(db.DateTime, default=dt.datetime.utcnow)
 
 
 class Message(db.Model):  # contact form
@@ -115,7 +229,8 @@ class Leader(db.Model):  # "Our Leadership" profiles
                 "photo_url": self.photo_url, "sort_order": self.sort_order, "i18n": self.i18n or {}}
 
 
-PAGES = {"who-we-are": "Who We Are", "where-we-stand": "Where We Stand", "leadership": "Our Leadership"}
+PAGES = {"who-we-are": "Who We Are", "where-we-stand": "Where We Stand", "leadership": "Our Leadership",
+         "home-hero": "Waaberi Party"}
 
 LANGS = ("so", "ar")  # extra languages; English lives in the main columns
 
@@ -147,17 +262,18 @@ NEW_COLUMNS = [  # (model, column, SQL type) added to existing databases on star
     (Donation, "target", "VARCHAR(200)"), (Donation, "campaign_id", "INTEGER"),
     (Donation, "email", "VARCHAR(255)"), (Donation, "anonymous", "BOOLEAN NOT NULL DEFAULT FALSE"),
     (Donation, "gateway", "VARCHAR(20)"), (Donation, "gateway_msg", "VARCHAR(200)"),
+    (PartyMember, "password_hash", "VARCHAR(255)"), (PartyMember, "verification_token", "VARCHAR(32)"),
+    (LoginAttempt, "kind", "VARCHAR(10) NOT NULL DEFAULT 'admin'"),
 ]
 
 
 def add_missing_columns():
-    """Small upgrade step so existing databases get new columns."""
-    insp = inspect(db.engine)
+    """Small upgrade step so existing databases get new columns.
+    Uses IF NOT EXISTS (not a pre-check) so concurrent gunicorn workers running this at boot can't race each other."""
     for model, col, sqltype in NEW_COLUMNS:
         t = model.__tablename__
-        if col not in {c["name"] for c in insp.get_columns(t)}:
-            with db.engine.begin() as conn:
-                conn.execute(text(f'ALTER TABLE "{t}" ADD COLUMN {col} {sqltype}'))
+        with db.engine.begin() as conn:
+            conn.execute(text(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS {col} {sqltype}'))
 
 ROLES = {  # role -> permissions
     "super_admin": {"posts", "members", "messages", "donations", "users", "pages"},
@@ -197,10 +313,33 @@ def create_app():
         token = request.headers.get("Authorization", "").removeprefix("Bearer ")
         try:
             data = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+            if data.get("typ") != "admin":
+                return None
             a = db.session.get(Admin, int(data["sub"]))
         except (jwt.PyJWTError, KeyError, ValueError):
             return None
         return a if a and a.is_active else None  # checked on every request, so deactivation is instant
+
+    def load_member():
+        token = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        try:
+            data = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+            if data.get("typ") != "member":
+                return None
+            m = db.session.get(PartyMember, int(data["sub"]))
+        except (jwt.PyJWTError, KeyError, ValueError):
+            return None
+        return m if m and m.status == "approved" else None  # suspension/rejection revokes access instantly
+
+    def member_required(fn):
+        @wraps(fn)
+        def wrapper(*a, **kw):
+            member = load_member()
+            if not member:
+                return jsonify(error="Unauthorized"), 401
+            g.member = member
+            return fn(*a, **kw)
+        return wrapper
 
     def needs(perm=None):
         def deco(fn):
@@ -266,6 +405,319 @@ def create_app():
             return jsonify(error="This email is already on the list."), 409
         return jsonify(ok=True), 201
 
+    # ---------------- Geography ----------------
+    GEO_LEVELS = {
+        "countries": (Country, None, None),
+        "states": (State, "country_id", Country),
+        "regions": (Region, "state_id", State),
+        "cities": (City, "region_id", Region),
+        "districts": (District, "city_id", City),
+    }
+
+    @app.get("/api/geo/countries")
+    def geo_countries():
+        return jsonify([c.to_dict() for c in Country.query.order_by(Country.name)])
+
+    @app.get("/api/geo/states")
+    def geo_states():
+        q = State.query.order_by(State.name)
+        if cid := request.args.get("country_id"):
+            q = q.filter_by(country_id=cid)
+        return jsonify([s.to_dict() for s in q])
+
+    @app.get("/api/geo/regions")
+    def geo_regions():
+        q = Region.query.order_by(Region.name)
+        if sid := request.args.get("state_id"):
+            q = q.filter_by(state_id=sid)
+        return jsonify([r.to_dict() for r in q])
+
+    @app.get("/api/geo/cities")
+    def geo_cities():
+        q = City.query.order_by(City.name)
+        if rid := request.args.get("region_id"):
+            q = q.filter_by(region_id=rid)
+        return jsonify([c.to_dict() for c in q])
+
+    @app.get("/api/geo/districts")
+    def geo_districts():
+        q = District.query.order_by(District.name)
+        if cid := request.args.get("city_id"):
+            q = q.filter_by(city_id=cid)
+        return jsonify([d.to_dict() for d in q])
+
+    @app.post("/api/admin/geo/<level>")
+    @needs("members")
+    def geo_create(level):
+        spec = GEO_LEVELS.get(level)
+        if not spec:
+            return jsonify(error="Unknown geographic level."), 404
+        Model, parent_field, ParentModel = spec
+        d = request.get_json(silent=True) or {}
+        name = (d.get("name") or "").strip()
+        if not name:
+            return jsonify(error="Enter a name."), 400
+        kwargs = {"name": name}
+        if parent_field:
+            try:
+                parent_id = int(d.get(parent_field))
+            except (TypeError, ValueError):
+                parent_id = None
+            if not parent_id or not db.session.get(ParentModel, parent_id):
+                return jsonify(error="Choose a valid parent area."), 400
+            kwargs[parent_field] = parent_id
+        x = Model(**kwargs)
+        db.session.add(x); db.session.commit()
+        return jsonify(x.to_dict()), 201
+
+    @app.put("/api/admin/geo/<level>/<int:gid>")
+    @needs("members")
+    def geo_update(level, gid):
+        spec = GEO_LEVELS.get(level)
+        if not spec:
+            return jsonify(error="Unknown geographic level."), 404
+        Model, parent_field, ParentModel = spec
+        x = db.get_or_404(Model, gid)
+        d = request.get_json(silent=True) or {}
+        name = (d.get("name") or "").strip()
+        if not name:
+            return jsonify(error="Enter a name."), 400
+        x.name = name
+        if parent_field and parent_field in d:
+            try:
+                parent_id = int(d.get(parent_field))
+            except (TypeError, ValueError):
+                parent_id = None
+            if not parent_id or not db.session.get(ParentModel, parent_id):
+                return jsonify(error="Choose a valid parent area."), 400
+            setattr(x, parent_field, parent_id)
+        db.session.commit()
+        return jsonify(x.to_dict())
+
+    @app.delete("/api/admin/geo/<level>/<int:gid>")
+    @needs("members")
+    def geo_delete(level, gid):
+        spec = GEO_LEVELS.get(level)
+        if not spec:
+            return jsonify(error="Unknown geographic level."), 404
+        Model = spec[0]
+        try:
+            db.session.delete(db.get_or_404(Model, gid)); db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify(error="Remove the areas inside this one first."), 409
+        return "", 204
+
+    def valid_location_chain(d):
+        """Validate country/state/region/city[/district] form a real parent chain; return (ids, error)."""
+        try:
+            country_id, state_id = int(d.get("country_id")), int(d.get("state_id"))
+            region_id, city_id = int(d.get("region_id")), int(d.get("city_id"))
+        except (TypeError, ValueError):
+            return None, "Choose your country, state, region and city."
+        state, region, city = db.session.get(State, state_id), db.session.get(Region, region_id), db.session.get(City, city_id)
+        if not (state and state.country_id == country_id):
+            return None, "Choose a valid state for your country."
+        if not (region and region.state_id == state_id):
+            return None, "Choose a valid region for your state."
+        if not (city and city.region_id == region_id):
+            return None, "Choose a valid city for your region."
+        district_id = None
+        if d.get("district_id"):
+            try:
+                district_id = int(d["district_id"])
+            except (TypeError, ValueError):
+                return None, "Invalid district."
+            district = db.session.get(District, district_id)
+            if not (district and district.city_id == city_id):
+                return None, "Choose a valid district for your city."
+        return {"country_id": country_id, "state_id": state_id, "region_id": region_id,
+                "city_id": city_id, "district_id": district_id}, None
+
+    # ---------------- Party membership ----------------
+    @app.post("/api/members/register")
+    def register_member():
+        d = request.get_json(silent=True) or {}
+        first, last = (d.get("first_name") or "").strip(), (d.get("last_name") or "").strip()
+        if not first or not last:
+            return jsonify(error="Enter your first and last name."), 400
+        phone = (d.get("phone") or "").strip()
+        if not re.fullmatch(r"\+?[0-9 ()-]{7,20}", phone):
+            return jsonify(error="Enter a valid phone number."), 400
+        try:
+            email = validate_email(d.get("email", ""), check_deliverability=False).normalized
+        except EmailNotValidError:
+            return jsonify(error="Enter a valid email address."), 400
+        loc, err = valid_location_chain(d)
+        if err:
+            return jsonify(error=err), 400
+        if not (d.get("agreed_to_terms") and d.get("consent_data_processing")):
+            return jsonify(error="You must agree to the membership terms and consent to data processing."), 400
+        dob = None
+        if d.get("date_of_birth"):
+            try:
+                dob = dt.date.fromisoformat(d["date_of_birth"])
+            except ValueError:
+                return jsonify(error="Enter a valid date of birth."), 400
+        m = PartyMember(first_name=first, last_name=last, middle_name=(d.get("middle_name") or "").strip() or None,
+                        gender=(d.get("gender") or "").strip() or None, date_of_birth=dob, email=email, phone=phone,
+                        alt_phone=(d.get("alt_phone") or "").strip() or None,
+                        membership_type=(d.get("membership_type") or "").strip() or None,
+                        occupation=(d.get("occupation") or "").strip() or None,
+                        agreed_to_terms=True, consent_data_processing=True, **loc)
+        try:
+            db.session.add(m); db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify(error="An application with this email already exists."), 409
+        return jsonify(id=m.id, status=m.status), 201
+
+    @app.get("/api/admin/party-members")
+    @needs("members")
+    def party_members():
+        q = PartyMember.query.order_by(PartyMember.id.desc())
+        if status := request.args.get("status"):
+            q = q.filter_by(status=status)
+        return jsonify([m.to_dict() for m in q.limit(200)])
+
+    @app.get("/api/admin/party-members/<int:mid>")
+    @needs("members")
+    def party_member_detail(mid):
+        return jsonify(db.get_or_404(PartyMember, mid).to_dict())
+
+    def set_member_status(mid, status):
+        m = db.get_or_404(PartyMember, mid)
+        m.status, m.reviewed_at, m.reviewed_by = status, dt.datetime.utcnow(), g.admin.id
+        if status == "approved" and not m.membership_id:
+            m.membership_id = f"WB-{dt.datetime.utcnow().year}-{m.id:06d}"
+            m.verification_token = uuid.uuid4().hex
+        db.session.commit()
+        return m
+
+    @app.post("/api/admin/party-members/<int:mid>/approve")
+    @needs("members")
+    def approve_member(mid):
+        return jsonify(set_member_status(mid, "approved").to_dict())
+
+    @app.post("/api/admin/party-members/<int:mid>/reject")
+    @needs("members")
+    def reject_member(mid):
+        return jsonify(set_member_status(mid, "rejected").to_dict())
+
+    @app.post("/api/admin/party-members/<int:mid>/suspend")
+    @needs("members")
+    def suspend_member(mid):
+        return jsonify(set_member_status(mid, "suspended").to_dict())
+
+    @app.post("/api/admin/party-members/<int:mid>/reactivate")
+    @needs("members")
+    def reactivate_member(mid):
+        return jsonify(set_member_status(mid, "approved").to_dict())
+
+    @app.put("/api/admin/party-members/<int:mid>/location")
+    @needs("members")
+    def update_member_location(mid):
+        m = db.get_or_404(PartyMember, mid)
+        d = request.get_json(silent=True) or {}
+        reason = (d.get("reason") or "").strip()
+        if not reason:
+            return jsonify(error="Enter a reason for this location change."), 400
+        loc, err = valid_location_chain(d)
+        if err:
+            return jsonify(error=err), 400
+        db.session.add(MemberLocationHistory(
+            member_id=m.id, old_region_id=m.region_id, new_region_id=loc["region_id"],
+            old_city_id=m.city_id, new_city_id=loc["city_id"],
+            old_district_id=m.district_id, new_district_id=loc["district_id"],
+            reason=reason, changed_by=g.admin.id))
+        m.country_id, m.state_id, m.region_id = loc["country_id"], loc["state_id"], loc["region_id"]
+        m.city_id, m.district_id = loc["city_id"], loc["district_id"]
+        db.session.commit()
+        return jsonify(m.to_dict())
+
+    @app.put("/api/admin/party-members/<int:mid>/set-password")
+    @needs("members")
+    def set_member_password(mid):
+        m = db.get_or_404(PartyMember, mid)
+        if m.status != "approved":
+            return jsonify(error="Only approved members can have a portal password."), 400
+        d = request.get_json(silent=True) or {}
+        pw = d.get("password") or ""
+        if len(pw) < 10:
+            return jsonify(error="Password must be at least 10 characters."), 400
+        m.password_hash = generate_password_hash(pw)
+        db.session.commit()
+        return jsonify(m.to_dict())
+
+    @app.post("/api/members/login")
+    def member_login():
+        d = request.get_json(silent=True) or {}
+        email = (d.get("email") or "").strip().lower()
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+        if login_rate_limited(email, "member"):
+            return jsonify(error="Too many attempts. Wait 15 minutes and try again."), 429
+        m = PartyMember.query.filter_by(email=email).first()
+        ok = bool(m and m.status == "approved" and m.password_hash
+                  and check_password_hash(m.password_hash, d.get("password", "")))
+        db.session.add(LoginAttempt(email=email, ip=ip, success=ok, kind="member")); db.session.commit()
+        if not ok:
+            return jsonify(error="Wrong email or password."), 401
+        token = jwt.encode({"sub": str(m.id), "typ": "member", "exp": dt.datetime.utcnow() + dt.timedelta(hours=8)},
+                           app.config["SECRET_KEY"], algorithm="HS256")
+        return jsonify(token=token, member=m.to_dict())
+
+    def location_names(m):
+        nm = lambda Model, id_: db.session.get(Model, id_).name if id_ else None
+        return {"country_name": nm(Country, m.country_id), "state_name": nm(State, m.state_id),
+                "region_name": nm(Region, m.region_id), "city_name": nm(City, m.city_id),
+                "district_name": nm(District, m.district_id)}
+
+    @app.get("/api/members/me")
+    @member_required
+    def member_me():
+        return jsonify({**g.member.to_dict(), **location_names(g.member)})
+
+    @app.put("/api/members/me")
+    @member_required
+    def member_update_me():
+        m, d = g.member, (request.get_json(silent=True) or {})
+        m.alt_phone = (d.get("alt_phone") or "").strip() or None
+        m.occupation = (d.get("occupation") or "").strip() or None
+        m.membership_type = (d.get("membership_type") or "").strip() or None
+        m.photo_url = (d.get("photo_url") or "").strip() or None
+        db.session.commit()
+        return jsonify(m.to_dict())
+
+    @app.post("/api/members/me/change-password")
+    @member_required
+    def member_change_password():
+        m, d = g.member, (request.get_json(silent=True) or {})
+        if not (m.password_hash and check_password_hash(m.password_hash, d.get("current_password", ""))):
+            return jsonify(error="Your current password is incorrect."), 400
+        new_pw = d.get("new_password") or ""
+        if len(new_pw) < 10:
+            return jsonify(error="New password must be at least 10 characters."), 400
+        m.password_hash = generate_password_hash(new_pw)
+        db.session.commit()
+        return jsonify(ok=True)
+
+    @app.get("/api/members/me/card")
+    @member_required
+    def member_card():
+        m = g.member
+        url = f"{request.host_url.rstrip('/')}/verify/{m.verification_token}"
+        img = qrcode.make(url, image_factory=qrcode.image.svg.SvgImage)
+        buf = BytesIO(); img.save(buf)
+        return jsonify(**m.to_dict(), **location_names(m), qr_svg=buf.getvalue().decode("utf-8"))
+
+    @app.get("/api/members/verify/<token>")
+    def member_verify(token):
+        m = PartyMember.query.filter_by(verification_token=token).first()
+        if not m:
+            return jsonify(error="Not found."), 404
+        return jsonify(name=f"{m.first_name} {m.last_name}", membership_id=m.membership_id,
+                       status=m.status, photo_url=m.photo_url)
+
     @app.post("/api/contact")
     def contact():
         d = request.get_json(silent=True) or {}
@@ -274,13 +726,25 @@ def create_app():
         db.session.add(Message(name=d["name"], email=d["email"], body=d["body"])); db.session.commit()
         return jsonify(ok=True), 201
 
+    def login_rate_limited(email, kind):
+        recent = dt.datetime.utcnow() - dt.timedelta(minutes=15)
+        fails = LoginAttempt.query.filter(LoginAttempt.email == email, LoginAttempt.kind == kind,
+                                          LoginAttempt.success.is_(False), LoginAttempt.created_at > recent).count()
+        return fails >= 5
+
     @app.post("/api/auth/login")
     def login():
         d = request.get_json(silent=True) or {}
-        a = Admin.query.filter_by(email=d.get("email", "")).first()
-        if not a or not a.is_active or not check_password_hash(a.password_hash, d.get("password", "")):
+        email = (d.get("email") or "").strip().lower()
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+        if login_rate_limited(email, "admin"):
+            return jsonify(error="Too many attempts. Wait 15 minutes and try again."), 429
+        a = Admin.query.filter_by(email=email).first()
+        ok = bool(a and a.is_active and check_password_hash(a.password_hash, d.get("password", "")))
+        db.session.add(LoginAttempt(email=email, ip=ip, success=ok, kind="admin")); db.session.commit()
+        if not ok:
             return jsonify(error="Wrong email or password."), 401
-        token = jwt.encode({"sub": str(a.id), "exp": dt.datetime.utcnow() + dt.timedelta(hours=8)},
+        token = jwt.encode({"sub": str(a.id), "typ": "admin", "exp": dt.datetime.utcnow() + dt.timedelta(hours=8)},
                            app.config["SECRET_KEY"], algorithm="HS256")
         return jsonify(token=token, user=me_dict(a))
 
@@ -739,6 +1203,12 @@ def create_app():
         db.session.commit()
         return jsonify({**me_dict(u), "is_active": u.is_active})
 
+    @app.get("/api/admin/login-activity")
+    @needs("users")
+    def login_activity():
+        return jsonify([{"email": x.email, "ip": x.ip, "success": x.success, "created_at": x.created_at.isoformat()}
+                        for x in LoginAttempt.query.filter_by(kind="admin").order_by(LoginAttempt.id.desc()).limit(50)])
+
     return app
 
 
@@ -776,6 +1246,12 @@ PAGE_DEFAULTS = {
     "leadership": ("Meet the people leading the Waaberi movement.", "",
                    {"so": {"title": "Hoggaankeena", "intro": "La kulan dadka hoggaaminaya dhaqdhaqaaqa Waaberi."},
                     "ar": {"title": "قيادتنا", "intro": "تعرّف على الأشخاص الذين يقودون حركة وابيري."}}),
+    "home-hero": ("New Dawn for Somalia",
+                  "Building a united, peaceful, and democratic nation through integrity, education, and good governance.",
+                  {"so": {"title": "Xisbiga Waaberi", "intro": "Waaberi Cusub oo Soomaaliya ah",
+                          "body": "Dhisidda qaran midaysan, nabad ah oo dimuqraadi ah, iyadoo lagu salaynayo daacadnimo, waxbarasho iyo maamul wanaag."},
+                   "ar": {"title": "حزب وابيري", "intro": "فجر جديد للصومال",
+                          "body": "نبني أمة موحدة ومسالمة وديمقراطية من خلال النزاهة والتعليم والحكم الرشيد."}}),
 }
 
 

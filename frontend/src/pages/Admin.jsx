@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { call, login, uploadImage } from "../api.js";
 import Logo from "../Logo.jsx";
+import { useLang } from "../i18n.jsx";
 
 // Image picker: upload from computer (or paste a link), with preview and remove
 function ImageField({ label, value, onChange, token }) {
@@ -71,23 +72,42 @@ function Flags({ x, keys }) {
 }
 
 function Login({ onToken }) {
+  const { t, tErr } = useLang();
   const [c, setC] = useState({ email: "", password: "" });
+  const [show, setShow] = useState(false);
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const validate = () => {
+    if (!c.email.trim()) return t("login_email_required");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) return t("login_email_invalid");
+    if (!c.password) return t("login_password_required");
+    return "";
+  };
   const go = async (e) => {
     e.preventDefault();
+    const v = validate();
+    if (v) { setErr(v); return; }
+    setErr(""); setBusy(true);
     try { const { token } = await login(c); sessionStorage.setItem("wtoken", token); onToken(token); }
-    catch (x) { setErr(x.message); }
+    catch (x) { setErr(tErr(x.message)); }
+    finally { setBusy(false); }
   };
   return (
     <div className="login-wrap">
-      <form className="login" onSubmit={go}>
+      <form className="login" onSubmit={go} noValidate>
         <Logo className="logo-login" />
-        <h1>Admin sign in</h1>
-        <label className="field"><span>Email</span><input type="email" required value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} /></label>
-        <label className="field"><span>Password</span><input type="password" required value={c.password} onChange={(e) => setC({ ...c, password: e.target.value })} /></label>
-        <button className="btn btn-blue block">Sign in</button>
+        <h1>{t("login_title")}</h1>
+        <label className="field"><span>{t("login_email")}</span>
+          <input type="email" value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} /></label>
+        <label className="field"><span>{t("login_password")}</span>
+          <div className="pw-wrap">
+            <input type={show ? "text" : "password"} value={c.password} onChange={(e) => setC({ ...c, password: e.target.value })} />
+            <button type="button" className="pw-toggle" onClick={() => setShow(!show)} aria-label={show ? t("login_hide") : t("login_show")}>{show ? "🙈" : "👁"}</button>
+          </div>
+        </label>
+        <button className="btn btn-blue block" disabled={busy}>{busy ? t("login_signing_in") : t("login_signin")}</button>
         {err && <p role="alert" className="err">{err}</p>}
-        <Link to="/" className="link">← Back to website</Link>
+        <Link to="/" className="link">{t("login_back")}</Link>
       </form>
     </div>
   );
@@ -269,7 +289,11 @@ function Donations({ token }) {
   );
 }
 
-const PAGE_TABS = [["who-we-are", "Who We Are"], ["where-we-stand", "Where We Stand"], ["leadership", "Our Leadership"]];
+const PAGE_TABS = [["home-hero", "Homepage Hero"], ["who-we-are", "Who We Are"], ["where-we-stand", "Where We Stand"], ["leadership", "Our Leadership"]];
+const FIELD_LABELS = {
+  "home-hero": ["Kicker", "Headline", "Subheading"],
+  default: ["Page title", "Introduction", "Main text"],
+};
 const blankLeader = { id: null, name: "", position: "", bio: "", photo_url: "", sort_order: 0, i18n: {} };
 
 function Leaders({ token }) {
@@ -321,6 +345,206 @@ function Leaders({ token }) {
   );
 }
 
+function GeoColumn({ label, items, selectedId, onSelect, onAdd, onDelete, disabled }) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const add = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true); setErr("");
+    try { await onAdd(name.trim()); setName(""); } catch (x) { setErr(x.message); } finally { setBusy(false); }
+  };
+  const del = async (id) => { if (confirm("Remove this area?")) { try { await onDelete(id); } catch (x) { setErr(x.message); } } };
+  return (
+    <div className="geo-col">
+      <h4>{label}</h4>
+      {disabled ? <p className="muted small">Select the parent area first.</p> : (
+        <>
+          <ul className="geo-list">
+            {items.map((it) => (
+              <li key={it.id} className={selectedId === it.id ? "on" : ""}>
+                {onSelect ? <button type="button" className="link" onClick={() => onSelect(it.id)}>{it.name}</button> : <span>{it.name}</span>}
+                <button type="button" className="danger small" onClick={() => del(it.id)} aria-label={`Remove ${it.name}`}>×</button>
+              </li>
+            ))}
+            {items.length === 0 && <li className="muted">None yet.</li>}
+          </ul>
+          <form onSubmit={add} className="row-l">
+            <input placeholder={`Add ${label.toLowerCase()}`} value={name} onChange={(e) => setName(e.target.value)} />
+            <button className="btn btn-plain small" disabled={busy}>Add</button>
+          </form>
+          {err && <small className="err">{err}</small>}
+        </>
+      )}
+    </div>
+  );
+}
+
+function GeoAreas({ token }) {
+  const [countries, setCountries] = useState([]);
+  const [states, setStates] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [cities, setCities] = useState([]);
+  const [districts, setDistricts] = useState([]);
+  const [sel, setSel] = useState({ country: null, state: null, region: null, city: null });
+
+  const loadCountries = useCallback(() => call("/geo/countries").then(setCountries), []);
+  const loadStates = useCallback((id) => (id ? call(`/geo/states?country_id=${id}`).then(setStates) : setStates([])), []);
+  const loadRegions = useCallback((id) => (id ? call(`/geo/regions?state_id=${id}`).then(setRegions) : setRegions([])), []);
+  const loadCities = useCallback((id) => (id ? call(`/geo/cities?region_id=${id}`).then(setCities) : setCities([])), []);
+  const loadDistricts = useCallback((id) => (id ? call(`/geo/districts?city_id=${id}`).then(setDistricts) : setDistricts([])), []);
+  useEffect(() => { loadCountries(); }, [loadCountries]);
+
+  const selectCountry = (id) => { setSel({ country: id, state: null, region: null, city: null }); loadStates(id); setRegions([]); setCities([]); setDistricts([]); };
+  const selectState = (id) => { setSel((s) => ({ ...s, state: id, region: null, city: null })); loadRegions(id); setCities([]); setDistricts([]); };
+  const selectRegion = (id) => { setSel((s) => ({ ...s, region: id, city: null })); loadCities(id); setDistricts([]); };
+  const selectCity = (id) => { setSel((s) => ({ ...s, city: id })); loadDistricts(id); };
+
+  const add = (level, parent) => (name) => call(`/admin/geo/${level}`, { method: "POST", body: { ...parent, name } }, token);
+  const del = (level) => (id) => call(`/admin/geo/${level}/${id}`, { method: "DELETE" }, token);
+
+  return (
+    <>
+      <h2>Geographic areas</h2>
+      <p className="muted">Countries, states, regions, cities and districts used for membership registration (and later, election scopes).</p>
+      <div className="geo-cols">
+        <GeoColumn label="Countries" items={countries} selectedId={sel.country} onSelect={selectCountry}
+          onAdd={async (name) => { await add("countries", {})(name); loadCountries(); }}
+          onDelete={async (id) => { await del("countries")(id); loadCountries(); if (sel.country === id) selectCountry(null); }} />
+        <GeoColumn label="States" items={states} selectedId={sel.state} onSelect={selectState} disabled={!sel.country}
+          onAdd={async (name) => { await add("states", { country_id: sel.country })(name); loadStates(sel.country); }}
+          onDelete={async (id) => { await del("states")(id); loadStates(sel.country); if (sel.state === id) selectState(null); }} />
+        <GeoColumn label="Regions" items={regions} selectedId={sel.region} onSelect={selectRegion} disabled={!sel.state}
+          onAdd={async (name) => { await add("regions", { state_id: sel.state })(name); loadRegions(sel.state); }}
+          onDelete={async (id) => { await del("regions")(id); loadRegions(sel.state); if (sel.region === id) selectRegion(null); }} />
+        <GeoColumn label="Cities" items={cities} selectedId={sel.city} onSelect={selectCity} disabled={!sel.region}
+          onAdd={async (name) => { await add("cities", { region_id: sel.region })(name); loadCities(sel.region); }}
+          onDelete={async (id) => { await del("cities")(id); loadCities(sel.region); if (sel.city === id) selectCity(null); }} />
+        <GeoColumn label="Districts" items={districts} disabled={!sel.city}
+          onAdd={async (name) => { await add("districts", { city_id: sel.city })(name); loadDistricts(sel.city); }}
+          onDelete={async (id) => { await del("districts")(id); loadDistricts(sel.city); }} />
+      </div>
+    </>
+  );
+}
+
+const STATUS_LABELS = { pending: "Pending", under_review: "Under review", approved: "Approved", rejected: "Rejected", suspended: "Suspended", expired: "Expired" };
+const STATUS_PILL = { pending: "pending", approved: "confirmed", rejected: "rejected", suspended: "rejected" };
+
+function LocationEditForm({ member, token, onDone }) {
+  const [countries, setCountries] = useState([]);
+  const [states, setStates] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [cities, setCities] = useState([]);
+  const [districts, setDistricts] = useState([]);
+  const [f, setF] = useState({
+    country_id: member.country_id, state_id: member.state_id, region_id: member.region_id,
+    city_id: member.city_id, district_id: member.district_id || "", reason: "",
+  });
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { call("/geo/countries").then(setCountries); }, []);
+  useEffect(() => { if (f.country_id) call(`/geo/states?country_id=${f.country_id}`).then(setStates); }, [f.country_id]);
+  useEffect(() => { if (f.state_id) call(`/geo/regions?state_id=${f.state_id}`).then(setRegions); }, [f.state_id]);
+  useEffect(() => { if (f.region_id) call(`/geo/cities?region_id=${f.region_id}`).then(setCities); }, [f.region_id]);
+  useEffect(() => { if (f.city_id) call(`/geo/districts?city_id=${f.city_id}`).then(setDistricts); }, [f.city_id]);
+
+  const set = (k) => (e) => {
+    const v = e.target.value;
+    const clears = { country_id: ["state_id", "region_id", "city_id", "district_id"], state_id: ["region_id", "city_id", "district_id"],
+                     region_id: ["city_id", "district_id"], city_id: ["district_id"] };
+    const reset = Object.fromEntries((clears[k] || []).map((c) => [c, ""]));
+    setF({ ...f, [k]: v, ...reset });
+  };
+
+  const save = async (e) => {
+    e.preventDefault();
+    if (!f.reason.trim()) { setErr("Enter a reason for this change."); return; }
+    setBusy(true); setErr("");
+    try { await call(`/admin/party-members/${member.id}/location`, { method: "PUT", body: f }, token); onDone(); }
+    catch (x) { setErr(x.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="panel" style={{ marginBottom: "1.2rem" }}>
+      <h3>Edit location — {member.first_name} {member.last_name}</h3>
+      <form className="aform" onSubmit={save}>
+        <label className="field"><span>Country</span><select value={f.country_id} onChange={set("country_id")}>{countries.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+        <label className="field"><span>State</span><select value={f.state_id} onChange={set("state_id")}>{states.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+        <label className="field"><span>Region</span><select value={f.region_id} onChange={set("region_id")}>{regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+        <label className="field"><span>City</span><select value={f.city_id} onChange={set("city_id")}>{cities.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+        <label className="field"><span>District</span>
+          <select value={f.district_id || ""} onChange={set("district_id")}><option value="">—</option>{districts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
+        </label>
+        <label className="field wide"><span>Reason for this correction (required)</span><textarea rows="2" value={f.reason} onChange={set("reason")} /></label>
+        <div className="wide row-l">
+          <button className="btn btn-blue" disabled={busy}>Save location</button>
+          <button type="button" className="btn btn-plain" onClick={onDone}>Cancel</button>
+          {err && <span className="err">{err}</span>}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function PartyMembers({ token }) {
+  const [status, setStatus] = useState("");
+  const [rows, setRows] = useState([]);
+  const [msg, setMsg] = useState({ ok: true, text: "" });
+  const [locEdit, setLocEdit] = useState(null);
+  const load = useCallback(() => call(`/admin/party-members${status ? `?status=${status}` : ""}`, {}, token).then(setRows), [token, status]);
+  useEffect(() => { load(); }, [load]);
+
+  const act = async (m, action) => {
+    try { await call(`/admin/party-members/${m.id}/${action}`, { method: "POST" }, token); setMsg({ ok: true, text: "Updated." }); load(); }
+    catch (x) { setMsg({ ok: false, text: x.message }); }
+  };
+  const setPassword = async (m) => {
+    const p = prompt(`Set a portal password for ${m.first_name} ${m.last_name} (min 10 characters):`);
+    if (!p) return;
+    try { await call(`/admin/party-members/${m.id}/set-password`, { method: "PUT", body: { password: p } }, token); setMsg({ ok: true, text: "Password set." }); load(); }
+    catch (x) { setMsg({ ok: false, text: x.message }); }
+  };
+
+  return (
+    <>
+      <h2>Party members <small>({rows.length})</small></h2>
+      <p className="muted">Registered-member applications with an approved location. Distinct from the mailing-list "Members" tab.</p>
+      {locEdit && <LocationEditForm member={locEdit} token={token} onDone={() => { setLocEdit(null); load(); }} />}
+      <div className="toolbar">
+        <select className="mini" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
+          <option value="">All statuses</option>
+          {Object.entries(STATUS_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        {msg.text && <span role="status" className={msg.ok ? "ok" : "err"}>{msg.text}</span>}
+      </div>
+      <div className="tablewrap"><table>
+        <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Membership ID</th><th>Status</th><th /></tr></thead>
+        <tbody>
+          {rows.map((m) => (
+            <tr key={m.id}>
+              <td>{m.first_name} {m.last_name}</td><td>{m.email}</td><td>{m.phone}</td>
+              <td>{m.membership_id || "—"}</td>
+              <td><span className={`pill ${STATUS_PILL[m.status] || ""}`}>{STATUS_LABELS[m.status]}</span></td>
+              <td className="act">
+                {m.status !== "approved" && <button onClick={() => act(m, "approve")}>Approve</button>}
+                {m.status !== "rejected" && <button className="danger" onClick={() => act(m, "reject")}>Reject</button>}
+                {m.status === "approved" && <button className="danger" onClick={() => act(m, "suspend")}>Suspend</button>}
+                {m.status === "suspended" && <button onClick={() => act(m, "reactivate")}>Reactivate</button>}
+                <button onClick={() => setLocEdit(m)}>Edit location</button>
+                {m.status === "approved" && <button onClick={() => setPassword(m)}>{m.has_password ? "Reset portal password" : "Set portal password"}</button>}
+              </td>
+            </tr>
+          ))}
+          {rows.length === 0 && <tr><td colSpan="6" className="empty">No applications found.</td></tr>}
+        </tbody>
+      </table></div>
+    </>
+  );
+}
+
 function Pages({ token }) {
   const [lang, setLang] = useState("en");
   const [slug, setSlug] = useState("who-we-are");
@@ -340,16 +564,25 @@ function Pages({ token }) {
       {!f ? <p className="muted">Loading…</p> : (
         <div className="panel">
           <form className="aform" onSubmit={save}>
-            <LangTabs value={lang} onChange={setLang} f={f} keys={["title", "intro", "body"]} />
-            <label className="field wide"><span>Page title</span><input {...tprops(lang)} value={tv(f, lang, "title")} onChange={(e) => setF(tset(f, lang, "title", e.target.value))} /></label>
-            <label className="field wide"><span>Introduction</span><textarea {...tprops(lang)} rows="3" value={tv(f, lang, "intro")} onChange={(e) => setF(tset(f, lang, "intro", e.target.value))} /></label>
-            <label className="field wide"><span>Main text</span>
-              <textarea {...tprops(lang)} rows="12" value={tv(f, lang, "body")} onChange={(e) => setF(tset(f, lang, "body", e.target.value))} />
-              <small className="muted">Leave a blank line between sections. In a section with more than one line, the first line becomes a heading.</small></label>
-            <ImageField label="Banner image (optional)" token={token} value={f.image_url} onChange={(v) => setF({ ...f, image_url: v })} />
+            {(() => {
+              const isHero = slug === "home-hero";
+              const [titleLabel, introLabel, bodyLabel] = FIELD_LABELS[slug] || FIELD_LABELS.default;
+              return (
+                <>
+                  <LangTabs value={lang} onChange={setLang} f={f} keys={["title", "intro", "body"]} />
+                  <label className="field wide"><span>{titleLabel}</span><input {...tprops(lang)} value={tv(f, lang, "title")} onChange={(e) => setF(tset(f, lang, "title", e.target.value))} /></label>
+                  <label className="field wide"><span>{introLabel}</span><textarea {...tprops(lang)} rows="3" value={tv(f, lang, "intro")} onChange={(e) => setF(tset(f, lang, "intro", e.target.value))} /></label>
+                  <label className="field wide"><span>{bodyLabel}</span>
+                    <textarea {...tprops(lang)} rows={isHero ? "3" : "12"} value={tv(f, lang, "body")} onChange={(e) => setF(tset(f, lang, "body", e.target.value))} />
+                    {!isHero && <small className="muted">Leave a blank line between sections. In a section with more than one line, the first line becomes a heading.</small>}
+                  </label>
+                  <ImageField label={isHero ? "Hero background image (optional)" : "Banner image (optional)"} token={token} value={f.image_url} onChange={(v) => setF({ ...f, image_url: v })} />
+                </>
+              );
+            })()}
             <div className="wide row-l">
               <button className="btn btn-blue">Save page</button>
-              <a className="link" href={`/${slug}`} target="_blank" rel="noreferrer">View page ↗</a>
+              <a className="link" href={slug === "home-hero" ? "/" : `/${slug}`} target="_blank" rel="noreferrer">View page ↗</a>
               {msg.text && <span role="status" className={msg.ok ? "ok" : "err"}>{msg.text}</span>}
             </div>
           </form>
@@ -390,10 +623,12 @@ const ROLE = {
 
 function Users({ token, me }) {
   const [rows, setRows] = useState([]);
+  const [activity, setActivity] = useState([]);
   const [f, setF] = useState({ name: "", email: "", password: "", role: "editor" });
   const [msg, setMsg] = useState({ ok: true, text: "" });
   const load = useCallback(() => call("/admin/users", {}, token).then(setRows), [token]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { call("/admin/login-activity", {}, token).then(setActivity).catch(() => {}); }, [token]);
   const act = async (u, body, ok) => {
     try { await call(`/admin/users/${u.id}`, { method: "PATCH", body }, token); setMsg({ ok: true, text: ok }); load(); }
     catch (x) { setMsg({ ok: false, text: x.message }); load(); }
@@ -437,6 +672,17 @@ function Users({ token, me }) {
           })}
         </tbody>
       </table></div>
+      <h3 style={{ marginTop: "1.5rem" }}>Recent login activity</h3>
+      <div className="tablewrap"><table>
+        <thead><tr><th>When</th><th>Email</th><th>IP</th><th>Result</th></tr></thead>
+        <tbody>
+          {activity.map((a, i) => (
+            <tr key={i}><td>{new Date(a.created_at).toLocaleString()}</td><td>{a.email}</td><td>{a.ip}</td>
+              <td><span className={`pill ${a.success ? "confirmed" : "rejected"}`}>{a.success ? "Success" : "Failed"}</span></td></tr>
+          ))}
+          {activity.length === 0 && <tr><td colSpan="4" className="empty">No login activity yet.</td></tr>}
+        </tbody>
+      </table></div>
     </>
   );
 }
@@ -453,8 +699,10 @@ export default function Admin() {
   if (!me) return <div className="login-wrap"><p className="muted">Loading…</p></div>;
   const can = (p) => me.permissions.includes(p);
   const tabs = [["overview", "Overview"], can("pages") && ["pages", "Site pages"], can("posts") && ["posts", "Content"], can("members") && ["members", "Members"],
+    can("members") && ["party-members", "Party Members"], can("members") && ["geo", "Geographic Areas"],
     can("donations") && ["donations", "Donations"], can("donations") && ["paysettings", "Payment settings"], can("messages") && ["messages", "Messages"], can("users") && ["users", "Team & roles"]].filter(Boolean);
-  const View = { overview: Overview, pages: Pages, posts: Posts, members: Members, donations: Donations, paysettings: PaySettings, messages: Messages, users: Users }[tab] || Overview;
+  const View = { overview: Overview, pages: Pages, posts: Posts, members: Members, "party-members": PartyMembers, geo: GeoAreas,
+    donations: Donations, paysettings: PaySettings, messages: Messages, users: Users }[tab] || Overview;
   return (
     <div className="admin">
       <aside>

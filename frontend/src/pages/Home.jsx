@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getPosts } from "../api.js";
+import { getPage, getPosts } from "../api.js";
 import { useLang } from "../i18n.jsx";
 import MailingForm from "./MailingForm.jsx";
 
@@ -8,15 +8,17 @@ export default function Home() {
   const { t, tErr, pick } = useLang();
   const [campaigns, setCampaigns] = useState(null);
   const [error, setError] = useState("");
+  const [hero, setHero] = useState(null);
   useEffect(() => { getPosts("campaign").then(setCampaigns).catch((e) => setError(e.message)); }, []);
+  useEffect(() => { getPage("home-hero").then(setHero).catch(() => {}); }, []);
 
   return (
     <>
-      <section className="hero">
+      <section className="hero" style={hero?.image_url ? { "--hero-img": `url(${hero.image_url})` } : undefined}>
         <div className="hero-inner">
-          <p className="hero-kicker">{t("hero_kicker")}</p>
-          <h1>{t("hero_title")}</h1>
-          <p className="hero-sub">{t("hero_sub")}</p>
+          <p className="hero-kicker">{hero ? pick(hero, "title") : t("hero_kicker")}</p>
+          <h1>{hero ? pick(hero, "intro") : t("hero_title")}</h1>
+          <p className="hero-sub">{hero ? pick(hero, "body") : t("hero_sub")}</p>
           <div className="row">
             <Link to="/join" className="btn btn-yellow">{t("join_us")}</Link>
             <Link to="/where-we-stand" className="btn btn-ghost">{t("where_we_stand")}</Link>

@@ -3,8 +3,11 @@ import { NavLink, Link, Outlet, Route, Routes, useLocation } from "react-router-
 import Home from "./pages/Home.jsx";
 import News from "./pages/News.jsx";
 import Join from "./pages/Join.jsx";
+import Register from "./pages/Register.jsx";
 import Contact from "./pages/Contact.jsx";
 import Admin from "./pages/Admin.jsx";
+import Member from "./pages/Member.jsx";
+import Verify from "./pages/Verify.jsx";
 import Simple from "./pages/Simple.jsx";
 import Donate from "./pages/Donate.jsx";
 import Logo from "./Logo.jsx";
@@ -67,6 +70,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/admin/*" element={<Admin />} />
+      <Route path="/member/*" element={<Member />} />
       <Route element={<Layout />}>
         <Route path="/" element={<Home />} />
         <Route path="/who-we-are" element={<Simple slug="who-we-are" />} />
@@ -74,6 +78,8 @@ export default function App() {
         <Route path="/leadership" element={<Simple slug="leadership" />} />
         <Route path="/donate" element={<Donate />} />
         <Route path="/join" element={<Join />} />
+        <Route path="/join-party" element={<Register />} />
+        <Route path="/verify/:token" element={<Verify />} />
         <Route path="/news" element={<News />} />
         <Route path="/contact" element={<Contact />} />
       </Route>
