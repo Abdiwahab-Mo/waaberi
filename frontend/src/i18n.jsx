@@ -36,7 +36,7 @@ const T = {
     tick1: "Latest announcements and statements", tick2: "Policy updates as they’re published", tick3: "Ways to volunteer and get involved",
     campaigns_eyebrow: "Time has changed", campaigns_title: "Latest campaigns", campaigns_loading: "Loading campaigns…",
 
-    f_name: "Full name", f_name_ph: "Your name", f_phone: "Phone number", f_email: "Email address", f_message: "Message",
+    f_name: "Full name", f_name_ph: "Your name", f_phone: "Phone number", f_email: "Email address", f_message: "Message", f_optional: "optional",
     join_btn: "Join the mailing list", joining: "Joining…",
     join_fine: "We’ll only use your details to send party updates. Unsubscribe any time.",
     join_ok_title: "Welcome to the movement", join_ok: "You’re on the list. Check your inbox soon.", join_another: "Add another person",
@@ -148,6 +148,10 @@ const T = {
     login_signin: "Sign in", login_signing_in: "Signing in…", login_back: "← Back to website",
     login_email_required: "Enter your email address.", login_email_invalid: "Enter a valid email address.",
     login_password_required: "Enter your password.",
+    login_badge: "Waaberi admin portal", login_welcome: "Welcome back",
+    login_subtitle: "Sign in to continue to the admin portal.",
+    login_live: "Nationwide movement",
+    login_restricted: "Access restricted to authorised personnel.",
 
     join_party_cta: "Want to become a registered party member? Apply here →",
     reg_eyebrow: "Membership application", reg_title: "Become a registered party member",
@@ -208,7 +212,7 @@ const T = {
     tick1: "Ogeysiisyadii iyo bayaannadii ugu dambeeyay", tick2: "Wararka siyaasadaha marka la soo saaro", tick3: "Siyaabaha aad u tabarrucayso oo aad uga qayb qaadan karto",
     campaigns_eyebrow: "Waqtigii waa isbeddelay", campaigns_title: "Ololayaashii ugu dambeeyay", campaigns_loading: "Ololayaasha waa la soo rarayaa…",
 
-    f_name: "Magaca oo buuxa", f_name_ph: "Magacaaga", f_phone: "Lambarka taleefanka", f_email: "Iimaylka", f_message: "Fariinta",
+    f_name: "Magaca oo buuxa", f_name_ph: "Magacaaga", f_phone: "Lambarka taleefanka", f_email: "Iimaylka", f_message: "Fariinta", f_optional: "ikhtiyaari",
     join_btn: "Ku biir liiska iimaylka", joining: "Waa lagu darayaa…",
     join_fine: "Xogtaada waxaan u isticmaali doonnaa oo keliya inaan kuu soo dirno wararka xisbiga. Waqti kasta waad ka bixi kartaa.",
     join_ok_title: "Ku soo dhowow dhaqdhaqaaqa", join_ok: "Waxaad ku jirtaa liiska. Dhawaan eeg sanduuqaaga iimaylka.", join_another: "Ku dar qof kale",
@@ -320,6 +324,10 @@ const T = {
     login_signin: "Soo gal", login_signing_in: "Waa la soo galinayaa…", login_back: "← Ku noqo boggaa",
     login_email_required: "Geli iimaylkaaga.", login_email_invalid: "Geli iimayl sax ah.",
     login_password_required: "Geli furahaaga sirta ah.",
+    login_badge: "Goobta maamulka Waaberi", login_welcome: "Ku soo dhowow mar kale",
+    login_subtitle: "Gal si aad ugu sii socoto goobta maamulka.",
+    login_live: "Dhaqdhaqaaq Qaran oo firfircoon",
+    login_restricted: "Gelitaanka waxaa loo xaddiday shaqaalaha la ansixiyay.",
 
     join_party_cta: "Ma doonaysaa inaad noqoto xubin diiwaan gashan? Halkan ka codso →",
     reg_eyebrow: "Codsiga xubinnimada", reg_title: "Noqo xubin diiwaan gashan oo xisbiga",
@@ -380,7 +388,7 @@ const T = {
     tick1: "أحدث الإعلانات والبيانات", tick2: "تحديثات السياسات فور نشرها", tick3: "طرق التطوع والمشاركة",
     campaigns_eyebrow: "لقد تغيّر الزمن", campaigns_title: "أحدث الحملات", campaigns_loading: "جارٍ تحميل الحملات…",
 
-    f_name: "الاسم الكامل", f_name_ph: "اسمك", f_phone: "رقم الهاتف", f_email: "البريد الإلكتروني", f_message: "الرسالة",
+    f_name: "الاسم الكامل", f_name_ph: "اسمك", f_phone: "رقم الهاتف", f_email: "البريد الإلكتروني", f_message: "الرسالة", f_optional: "اختياري",
     join_btn: "انضم إلى القائمة البريدية", joining: "جارٍ الانضمام…",
     join_fine: "لن نستخدم بياناتك إلا لإرسال أخبار الحزب. يمكنك إلغاء الاشتراك في أي وقت.",
     join_ok_title: "مرحبًا بك في الحركة", join_ok: "أنت الآن في القائمة. تفقّد بريدك قريبًا.", join_another: "أضف شخصًا آخر",
@@ -492,6 +500,10 @@ const T = {
     login_signin: "تسجيل الدخول", login_signing_in: "جارٍ تسجيل الدخول…", login_back: "← العودة إلى الموقع",
     login_email_required: "أدخل بريدك الإلكتروني.", login_email_invalid: "أدخل بريدًا إلكترونيًا صحيحًا.",
     login_password_required: "أدخل كلمة المرور.",
+    login_badge: "بوابة إدارة وابيري", login_welcome: "مرحبًا بعودتك",
+    login_subtitle: "سجّل الدخول لمتابعة بوابة الإدارة.",
+    login_live: "حركة على مستوى البلاد",
+    login_restricted: "الوصول مقتصر على الموظفين المصرح لهم.",
 
     join_party_cta: "هل تريد أن تصبح عضوًا مسجّلًا في الحزب؟ قدّم طلبك هنا ←",
     reg_eyebrow: "طلب العضوية", reg_title: "كن عضوًا مسجّلًا في الحزب",

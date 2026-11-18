@@ -1,6 +1,10 @@
-import raw from "./assets/logo.svg?raw";
+import icon from "./assets/logo-icon.png";
 
-// Logo is embedded in the JavaScript bundle, so it always shows with the current build
-export default function Logo({ className = "" }) {
-  return <span className={`logo-svg ${className}`} role="img" aria-label="Waaberi" dangerouslySetInnerHTML={{ __html: raw }} />;
+export default function Logo({ className = "", withText = true }) {
+  return (
+    <span className={`logo-mark ${className}`}>
+      <img className="logo-icon" src={icon} alt={withText ? "" : "Waaberi"} />
+      {withText && <span className="logo-word">WAABERI<small>Party</small></span>}
+    </span>
+  );
 }

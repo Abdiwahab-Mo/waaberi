@@ -94,21 +94,56 @@ function Login({ onToken }) {
   };
   return (
     <div className="login-wrap">
-      <form className="login" onSubmit={go} noValidate>
-        <Logo className="logo-login" />
-        <h1>{t("login_title")}</h1>
-        <label className="field"><span>{t("login_email")}</span>
-          <input type="email" value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} /></label>
-        <label className="field"><span>{t("login_password")}</span>
-          <div className="pw-wrap">
-            <input type={show ? "text" : "password"} value={c.password} onChange={(e) => setC({ ...c, password: e.target.value })} />
-            <button type="button" className="pw-toggle" onClick={() => setShow(!show)} aria-label={show ? t("login_hide") : t("login_show")}>{show ? "🙈" : "👁"}</button>
+      <div className="login-split">
+        <div className="login-brand">
+          <Logo className="logo-login" />
+          <span className="login-pill"><i className="dot" />{t("login_live")}</span>
+          <h2>{t("hero_title")}</h2>
+          <p>{t("hero_sub")}</p>
+          <div className="login-cards">
+            {["c-blue", "c-navy", "c-green", "c-ind"].map((cls, i) => (
+              <div key={i}><b className={cls}>{t(`p${i + 1}_t`)}</b><span>{t(`p${i + 1}_d`)}</span></div>
+            ))}
           </div>
-        </label>
-        <button className="btn btn-blue block" disabled={busy}>{busy ? t("login_signing_in") : t("login_signin")}</button>
-        {err && <p role="alert" className="err">{err}</p>}
-        <Link to="/" className="link">{t("login_back")}</Link>
-      </form>
+          <svg className="login-art" viewBox="0 0 400 400" aria-hidden="true">
+            <g fill="none" stroke="currentColor">
+              <circle cx="200" cy="200" r="170" opacity=".18" />
+              <circle cx="200" cy="200" r="120" opacity=".25" />
+              <circle cx="200" cy="200" r="70" opacity=".35" />
+              <path d="M200 10v380M10 200h380" opacity=".15" />
+            </g>
+            <g fill="var(--blue)"><circle cx="200" cy="200" r="7" /></g>
+            <g fill="var(--yellow)"><circle cx="150" cy="150" r="5" /><circle cx="260" cy="250" r="5" /></g>
+            <g fill="var(--green)"><circle cx="255" cy="160" r="5" /><circle cx="140" cy="255" r="5" /></g>
+          </svg>
+        </div>
+        <form className="login" onSubmit={go} noValidate>
+          <span className="login-pill on">{t("login_badge")}</span>
+          <h1>{t("login_welcome")}</h1>
+          <p className="login-sub">{t("login_subtitle")}</p>
+          <label className="field"><span>{t("login_email")}</span>
+            <div className="ic-wrap">
+              <svg className="ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                <rect x="2" y="4" width="16" height="12" rx="2" /><path d="m3 5 7 6 7-6" />
+              </svg>
+              <input type="email" value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} />
+            </div>
+          </label>
+          <label className="field"><span>{t("login_password")}</span>
+            <div className="ic-wrap pw-wrap">
+              <svg className="ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                <rect x="4" y="9" width="12" height="8" rx="2" /><path d="M6.5 9V6.5a3.5 3.5 0 0 1 7 0V9" />
+              </svg>
+              <input type={show ? "text" : "password"} value={c.password} onChange={(e) => setC({ ...c, password: e.target.value })} />
+              <button type="button" className="pw-toggle" onClick={() => setShow(!show)} aria-label={show ? t("login_hide") : t("login_show")}>{show ? "🙈" : "👁"}</button>
+            </div>
+          </label>
+          <button className="btn btn-blue block" disabled={busy}>{busy ? t("login_signing_in") : t("login_signin")}</button>
+          {err && <p role="alert" className="err">{err}</p>}
+          <p className="login-foot">{t("login_restricted")} <Link to="/contact" className="link">{t("footer_contact")}</Link></p>
+          <Link to="/" className="link">{t("login_back")}</Link>
+        </form>
+      </div>
     </div>
   );
 }
@@ -116,7 +151,7 @@ function Login({ onToken }) {
 function Overview({ token }) {
   const [s, setS] = useState(null);
   useEffect(() => { call("/admin/stats", {}, token).then(setS).catch(() => {}); }, [token]);
-  const defs = [["Members", "members"], ["Unread messages", "unread"], ["Campaigns", "campaigns"], ["News & statements", "news"], ["Raised (USD)", "raised"]];
+  const defs = [["Members", "members"], ["Pending applications", "pending_members"], ["Unread messages", "unread"], ["Campaigns", "campaigns"], ["News & statements", "news"], ["Raised (USD)", "raised"]];
   const cards = s ? defs.filter(([, k]) => s[k] !== undefined).map(([l, k]) => [l, k === "raised" ? `$${Number(s[k]).toLocaleString()}` : s[k]]) : [];
   return (
     <>
@@ -489,17 +524,53 @@ function LocationEditForm({ member, token, onDone }) {
   );
 }
 
+function MemberDetail({ member, token, onClose }) {
+  const [d, setD] = useState(null);
+  useEffect(() => { call(`/admin/party-members/${member.id}`, {}, token).then(setD).catch(() => {}); }, [member.id, token]);
+  const loc = d && [d.country_name, d.state_name, d.region_name, d.city_name, d.district_name].filter(Boolean).join(" / ");
+  return (
+    <div className="panel" style={{ marginBottom: "1.2rem" }}>
+      <h3>Application — {member.first_name} {member.last_name}</h3>
+      {!d ? <p className="muted">Loading…</p> : (
+        <dl className="dlist">
+          <div><dt>Membership ID</dt><dd>{d.membership_id || "—"}</dd></div>
+          <div><dt>Status</dt><dd><span className={`pill ${STATUS_PILL[d.status] || ""}`}>{STATUS_LABELS[d.status]}</span></dd></div>
+          <div><dt>Full name</dt><dd>{[d.first_name, d.middle_name, d.last_name].filter(Boolean).join(" ")}</dd></div>
+          <div><dt>Gender</dt><dd>{d.gender || "—"}</dd></div>
+          <div><dt>Date of birth</dt><dd>{d.date_of_birth || "—"}</dd></div>
+          <div><dt>Email</dt><dd>{d.email}</dd></div>
+          <div><dt>Phone</dt><dd>{d.phone}{d.alt_phone ? ` (alt: ${d.alt_phone})` : ""}</dd></div>
+          <div><dt>Occupation</dt><dd>{d.occupation || "—"}</dd></div>
+          <div><dt>Membership type</dt><dd>{d.membership_type || "—"}</dd></div>
+          <div><dt>Location</dt><dd>{loc || "—"}</dd></div>
+          <div><dt>Applied</dt><dd>{new Date(d.created_at).toLocaleString()}</dd></div>
+          <div><dt>Reviewed</dt><dd>{d.reviewed_at ? new Date(d.reviewed_at).toLocaleString() : "Not yet reviewed"}</dd></div>
+          {d.review_note && <div className="wide"><dt>Reviewer's note</dt><dd>{d.review_note}</dd></div>}
+          {d.photo_url && <div className="wide"><dt>Photo</dt><dd><img src={d.photo_url} alt="" style={{ maxWidth: "160px", borderRadius: "8px" }} /></dd></div>}
+        </dl>
+      )}
+      <div className="row-l"><button type="button" className="btn btn-plain" onClick={onClose}>Close</button></div>
+    </div>
+  );
+}
+
 function PartyMembers({ token }) {
   const [status, setStatus] = useState("");
   const [rows, setRows] = useState([]);
   const [msg, setMsg] = useState({ ok: true, text: "" });
   const [locEdit, setLocEdit] = useState(null);
+  const [detail, setDetail] = useState(null);
   const load = useCallback(() => call(`/admin/party-members${status ? `?status=${status}` : ""}`, {}, token).then(setRows), [token, status]);
   useEffect(() => { load(); }, [load]);
 
-  const act = async (m, action) => {
-    try { await call(`/admin/party-members/${m.id}/${action}`, { method: "POST" }, token); setMsg({ ok: true, text: "Updated." }); load(); }
+  const act = async (m, action, body) => {
+    try { await call(`/admin/party-members/${m.id}/${action}`, { method: "POST", body }, token); setMsg({ ok: true, text: "Updated." }); load(); }
     catch (x) { setMsg({ ok: false, text: x.message }); }
+  };
+  const reject = (m) => {
+    const note = prompt(`Reason for rejecting ${m.first_name} ${m.last_name}'s application (optional):`);
+    if (note === null) return;
+    act(m, "reject", { note: note.trim() });
   };
   const setPassword = async (m) => {
     const p = prompt(`Set a portal password for ${m.first_name} ${m.last_name} (min 10 characters):`);
@@ -512,6 +583,7 @@ function PartyMembers({ token }) {
     <>
       <h2>Party members <small>({rows.length})</small></h2>
       <p className="muted">Registered-member applications with an approved location. Distinct from the mailing-list "Members" tab.</p>
+      {detail && <MemberDetail member={detail} token={token} onClose={() => setDetail(null)} />}
       {locEdit && <LocationEditForm member={locEdit} token={token} onDone={() => { setLocEdit(null); load(); }} />}
       <div className="toolbar">
         <select className="mini" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
@@ -529,8 +601,10 @@ function PartyMembers({ token }) {
               <td>{m.membership_id || "—"}</td>
               <td><span className={`pill ${STATUS_PILL[m.status] || ""}`}>{STATUS_LABELS[m.status]}</span></td>
               <td className="act">
+                <button onClick={() => setDetail(m)}>Details</button>
+                {m.status === "pending" && <button onClick={() => act(m, "review")}>Mark under review</button>}
                 {m.status !== "approved" && <button onClick={() => act(m, "approve")}>Approve</button>}
-                {m.status !== "rejected" && <button className="danger" onClick={() => act(m, "reject")}>Reject</button>}
+                {m.status !== "rejected" && <button className="danger" onClick={() => reject(m)}>Reject</button>}
                 {m.status === "approved" && <button className="danger" onClick={() => act(m, "suspend")}>Suspend</button>}
                 {m.status === "suspended" && <button onClick={() => act(m, "reactivate")}>Reactivate</button>}
                 <button onClick={() => setLocEdit(m)}>Edit location</button>

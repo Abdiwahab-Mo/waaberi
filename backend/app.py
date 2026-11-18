@@ -29,7 +29,7 @@ class Admin(db.Model):
 class Member(db.Model):  # mailing list / "Join us"
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
-    phone = db.Column(db.String(32), nullable=False)
+    phone = db.Column(db.String(32))
     email = db.Column(db.String(255), unique=True, nullable=False)
     created_at = db.Column(db.DateTime, default=dt.datetime.utcnow)
 
@@ -108,6 +108,7 @@ class PartyMember(db.Model):  # a verified, approved party member (distinct from
     reviewed_by = db.Column(db.Integer, db.ForeignKey("admin.id"))
     password_hash = db.Column(db.String(255))  # null until an admin sets a portal password
     verification_token = db.Column(db.String(32), unique=True)  # set at approval, alongside membership_id
+    review_note = db.Column(db.Text)  # admin's reason, mainly set on rejection
 
     def to_dict(self):
         return {"id": self.id, "membership_id": self.membership_id,
@@ -119,7 +120,7 @@ class PartyMember(db.Model):  # a verified, approved party member (distinct from
                 "membership_type": self.membership_type, "occupation": self.occupation,
                 "status": self.status, "created_at": self.created_at.isoformat(),
                 "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
-                "has_password": bool(self.password_hash)}
+                "review_note": self.review_note, "has_password": bool(self.password_hash)}
 
 
 class MemberLocationHistory(db.Model):  # written whenever an approved member's location is corrected
@@ -255,6 +256,25 @@ def text_in_any(d, tr, field):
     return v or next((tr[l][field] for l in LANGS if field in tr.get(l, {})), "")
 
 
+def normalize_phone(raw):
+    """Accepts 061..., +252 61..., 252..., 00252... (and other countries' numbers with a + or
+    leading 00) and returns E.164-ish form, or None if it doesn't look like a phone number."""
+    s = re.sub(r"[\s()-]", "", raw or "")
+    if not s:
+        return None
+    if s.startswith("+"):
+        digits = s[1:]
+    elif s.startswith("00"):
+        digits = s[2:]
+    elif s.startswith("0"):
+        digits = "252" + s[1:]  # local Somali format, e.g. 061234567
+    else:
+        digits = s
+    if not digits.isdigit() or not (7 <= len(digits) <= 15):
+        return None
+    return "+" + digits
+
+
 NEW_COLUMNS = [  # (model, column, SQL type) added to existing databases on startup
     (Post, "i18n", "JSON"), (Page, "i18n", "JSON"), (Leader, "i18n", "JSON"),
     (Donation, "frequency", "VARCHAR(10) NOT NULL DEFAULT 'one_time'"),
@@ -263,8 +283,12 @@ NEW_COLUMNS = [  # (model, column, SQL type) added to existing databases on star
     (Donation, "email", "VARCHAR(255)"), (Donation, "anonymous", "BOOLEAN NOT NULL DEFAULT FALSE"),
     (Donation, "gateway", "VARCHAR(20)"), (Donation, "gateway_msg", "VARCHAR(200)"),
     (PartyMember, "password_hash", "VARCHAR(255)"), (PartyMember, "verification_token", "VARCHAR(32)"),
+    (PartyMember, "review_note", "TEXT"),
     (LoginAttempt, "kind", "VARCHAR(10) NOT NULL DEFAULT 'admin'"),
 ]
+
+
+NOW_NULLABLE = [(Member, "phone")]  # columns that used to be NOT NULL and no longer are
 
 
 def add_missing_columns():
@@ -274,6 +298,10 @@ def add_missing_columns():
         t = model.__tablename__
         with db.engine.begin() as conn:
             conn.execute(text(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS {col} {sqltype}'))
+    for model, col in NOW_NULLABLE:
+        t = model.__tablename__
+        with db.engine.begin() as conn:
+            conn.execute(text(f'ALTER TABLE "{t}" ALTER COLUMN {col} DROP NOT NULL'))
 
 ROLES = {  # role -> permissions
     "super_admin": {"posts", "members", "messages", "donations", "users", "pages"},
@@ -389,11 +417,17 @@ def create_app():
     @app.post("/api/members")
     def join():
         d = request.get_json(silent=True) or {}
+        if (d.get("website") or "").strip():  # honeypot: real visitors never fill this hidden field
+            return jsonify(ok=True), 201
         name, phone = (d.get("name") or "").strip(), (d.get("phone") or "").strip()
         if not name:
             return jsonify(error="Enter your name."), 400
-        if not re.fullmatch(r"\+?[0-9 ()-]{7,20}", phone):
-            return jsonify(error="Enter a valid phone number."), 400
+        if phone:
+            phone = normalize_phone(phone)
+            if not phone:
+                return jsonify(error="Enter a valid phone number."), 400
+        else:
+            phone = None
         try:
             email = validate_email(d.get("email", ""), check_deliverability=False).normalized
         except EmailNotValidError:
@@ -583,16 +617,24 @@ def create_app():
     @app.get("/api/admin/party-members/<int:mid>")
     @needs("members")
     def party_member_detail(mid):
-        return jsonify(db.get_or_404(PartyMember, mid).to_dict())
+        m = db.get_or_404(PartyMember, mid)
+        return jsonify({**m.to_dict(), **location_names(m)})
 
-    def set_member_status(mid, status):
+    def set_member_status(mid, status, note=None):
         m = db.get_or_404(PartyMember, mid)
         m.status, m.reviewed_at, m.reviewed_by = status, dt.datetime.utcnow(), g.admin.id
+        if note is not None:
+            m.review_note = note
         if status == "approved" and not m.membership_id:
             m.membership_id = f"WB-{dt.datetime.utcnow().year}-{m.id:06d}"
             m.verification_token = uuid.uuid4().hex
         db.session.commit()
         return m
+
+    @app.post("/api/admin/party-members/<int:mid>/review")
+    @needs("members")
+    def review_member(mid):
+        return jsonify(set_member_status(mid, "under_review").to_dict())
 
     @app.post("/api/admin/party-members/<int:mid>/approve")
     @needs("members")
@@ -602,7 +644,8 @@ def create_app():
     @app.post("/api/admin/party-members/<int:mid>/reject")
     @needs("members")
     def reject_member(mid):
-        return jsonify(set_member_status(mid, "rejected").to_dict())
+        note = ((request.get_json(silent=True) or {}).get("note") or "").strip() or None
+        return jsonify(set_member_status(mid, "rejected", note).to_dict())
 
     @app.post("/api/admin/party-members/<int:mid>/suspend")
     @needs("members")
@@ -798,6 +841,7 @@ def create_app():
         can, out = ROLES.get(g.admin.role, set()), {}
         if "members" in can:
             out["members"] = Member.query.count()
+            out["pending_members"] = PartyMember.query.filter(PartyMember.status.in_(("pending", "under_review"))).count()
         if "messages" in can:
             out["unread"] = Message.query.filter_by(is_read=False).count()
         if "posts" in can:
