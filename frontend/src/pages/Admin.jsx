@@ -4,6 +4,33 @@ import { call, login, uploadImage } from "../api.js";
 import Logo from "../Logo.jsx";
 import { useLang } from "../i18n.jsx";
 
+const ICON_PATHS = {
+  home: "M3 9.5 10 3l7 6.5 M5 8v8a1 1 0 0 0 1 1h3v-5h2v5h3a1 1 0 0 0 1-1V8",
+  layout: "M3 3h14v14H3Z M3 8h14 M8 8v9",
+  megaphone: "M3 9v2a1 1 0 0 0 1 1h1l7 3V5L5 8H4a1 1 0 0 0-1 1Z M15 8a3 3 0 0 1 0 4",
+  users: "M7 7.3a2.3 2.3 0 1 0 0-4.6 2.3 2.3 0 0 0 0 4.6Z M2.3 16c0-2.5 2-4.3 4.7-4.3s4.7 1.8 4.7 4.3 M14.5 9.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z M12.7 16c.2-2 1.6-3.3 3.5-3.3",
+  "user-check": "M8 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M2.5 17c0-3 2.5-5 5.5-5s5.5 2 5.5 5 M14 9l1.5 1.5L18 7.5",
+  map: "M3 5l5-2 4 2 5-2v12l-5 2-4-2-5 2Z M8 3v12 M12 5v12",
+  dollar: "M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15Z M10 5.5v9 M12.3 7.6c-.3-.7-1-1.1-2-1.1-1.2 0-2.1.7-2.1 1.7 0 2.4 4.3 1.2 4.3 3.6 0 1-1 1.8-2.2 1.8-1 0-1.8-.5-2.1-1.2",
+  card: "M2.5 5h15v10h-15Z M2.5 8.5h15 M5 12h3",
+  mail: "M2.5 4.5h15v11h-15Z M3 5.5l7 5.5 7-5.5",
+  shield: "M10 2.5 16.5 5v5c0 4-2.8 6.6-6.5 7.5C6.3 16.6 3.5 14 3.5 10V5Z M7.3 10l1.8 1.8 3.6-3.6",
+  clock: "M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15Z M10 6v4l3 2",
+  file: "M5 2.5h7l3 3v12H5Z M12 2.5V6h3 M7.5 10h5 M7.5 13h5",
+  logout: "M7 3.5H4.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1H7 M13 13.5l3.5-3.5-3.5-3.5 M16.5 10h-9",
+  sun: "M10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z M10 2.8v1.7 M10 15.5v1.7 M3.8 10H2.1 M17.9 10h-1.7 M5.5 5.5 4.3 4.3 M15.7 15.7l-1.2-1.2 M5.5 14.5l-1.2 1.2 M15.7 4.3l-1.2 1.2",
+  moon: "M16.8 12.4A6.8 6.8 0 0 1 7.6 3.2a6.8 6.8 0 1 0 9.2 9.2Z",
+  chevron: "M5.5 8 10 12.5 14.5 8",
+};
+
+function Ic({ name, className }) {
+  return (
+    <svg className={`ic-svg ${className || ""}`} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {ICON_PATHS[name].split(/\s+(?=M)/).map((d, i) => <path key={i} d={d} />)}
+    </svg>
+  );
+}
+
 // Image picker: upload from computer (or paste a link), with preview and remove
 function ImageField({ label, value, onChange, token }) {
   const input = useRef(null);
@@ -148,15 +175,32 @@ function Login({ onToken }) {
   );
 }
 
+const STAT_DEFS = [
+  ["Members", "members", "On the mailing list", "users", "blue"],
+  ["Pending applications", "pending_members", "Awaiting review", "clock", "gold"],
+  ["Unread messages", "unread", "Needs a reply", "mail", "red"],
+  ["Campaigns", "campaigns", "Published", "megaphone", "green"],
+  ["News & statements", "news", "Published", "file", "navy"],
+  ["Raised (USD)", "raised", "Confirmed donations", "dollar", "gold"],
+];
+
 function Overview({ token }) {
   const [s, setS] = useState(null);
   useEffect(() => { call("/admin/stats", {}, token).then(setS).catch(() => {}); }, [token]);
-  const defs = [["Members", "members"], ["Pending applications", "pending_members"], ["Unread messages", "unread"], ["Campaigns", "campaigns"], ["News & statements", "news"], ["Raised (USD)", "raised"]];
-  const cards = s ? defs.filter(([, k]) => s[k] !== undefined).map(([l, k]) => [l, k === "raised" ? `$${Number(s[k]).toLocaleString()}` : s[k]]) : [];
+  const cards = s ? STAT_DEFS.filter(([, k]) => s[k] !== undefined).map(([l, k, sub, icon, color]) =>
+    [l, k === "raised" ? `$${Number(s[k]).toLocaleString()}` : s[k], sub, icon, color]) : [];
   return (
     <>
       <h2>Overview</h2>
-      <div className="stats">{cards.map(([l, v]) => <div className="stat" key={l}><b>{v}</b><span>{l}</span></div>)}</div>
+      <p className="muted admin-sub">Snapshot of Waaberi Party activity</p>
+      <div className="stats">
+        {cards.map(([l, v, sub, icon, color]) => (
+          <div className="stat" key={l}>
+            <span className={`stat-ic ${color}`}><Ic name={icon} /></span>
+            <b>{v}</b><span>{l}</span><small>{sub}</small>
+          </div>
+        ))}
+      </div>
     </>
   );
 }
@@ -765,27 +809,41 @@ export default function Admin() {
   const [token, setToken] = useState(() => sessionStorage.getItem("wtoken"));
   const [me, setMe] = useState(null);
   const [tab, setTab] = useState("overview");
+  const [theme, setTheme] = useState(() => localStorage.getItem("admin-theme") || "light");
   const out = () => { sessionStorage.removeItem("wtoken"); setToken(null); setMe(null); };
   useEffect(() => {
     if (token) call("/auth/me", {}, token).then(setMe).catch(out);
   }, [token]);
+  useEffect(() => { localStorage.setItem("admin-theme", theme); }, [theme]);
   if (!token) return <Login onToken={setToken} />;
   if (!me) return <div className="login-wrap"><p className="muted">Loading…</p></div>;
   const can = (p) => me.permissions.includes(p);
-  const tabs = [["overview", "Overview"], can("pages") && ["pages", "Site pages"], can("posts") && ["posts", "Content"], can("members") && ["members", "Members"],
-    can("members") && ["party-members", "Party Members"], can("members") && ["geo", "Geographic Areas"],
-    can("donations") && ["donations", "Donations"], can("donations") && ["paysettings", "Payment settings"], can("messages") && ["messages", "Messages"], can("users") && ["users", "Team & roles"]].filter(Boolean);
+  const tabs = [["overview", "Overview", "home"], can("pages") && ["pages", "Site pages", "layout"], can("posts") && ["posts", "Content", "megaphone"], can("members") && ["members", "Members", "users"],
+    can("members") && ["party-members", "Party Members", "user-check"], can("members") && ["geo", "Geographic Areas", "map"],
+    can("donations") && ["donations", "Donations", "dollar"], can("donations") && ["paysettings", "Payment settings", "card"], can("messages") && ["messages", "Messages", "mail"], can("users") && ["users", "Team & roles", "shield"]].filter(Boolean);
   const View = { overview: Overview, pages: Pages, posts: Posts, members: Members, "party-members": PartyMembers, geo: GeoAreas,
     donations: Donations, paysettings: PaySettings, messages: Messages, users: Users }[tab] || Overview;
+  const initials = me.name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   return (
-    <div className="admin">
-      <aside>
-        <div className="brand"><span className="logo-tile"><Logo /></span></div>
-        <div className="chip-user"><b>{me.name}</b><span>{ROLE[me.role]?.[0]}</span></div>
-        <nav className="tabs">{tabs.map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}</nav>
-        <div className="side-foot"><Link to="/">View website</Link><button onClick={out}>Sign out</button></div>
-      </aside>
-      <section className="admin-main"><ErrorGate onAuth={out}><View token={token} me={me} /></ErrorGate></section>
+    <div className="admin" data-theme={theme}>
+      <header className="admin-topbar">
+        <span className="lang-badge">English <Ic name="chevron" /></span>
+        <button type="button" className="theme-toggle" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+          <Ic name={theme === "dark" ? "moon" : "sun"} />
+        </button>
+      </header>
+      <div className="admin-body">
+        <aside>
+          <div className="brand"><Logo className="logo-side" /></div>
+          <nav className="tabs">{tabs.map(([k, l, icon]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}><Ic name={icon} /><span>{l}</span></button>)}</nav>
+          <div className="side-foot">
+            <div className="chip-user"><span className="avatar">{initials}</span><span className="chip-user-txt"><b>{me.name}</b><small>{ROLE[me.role]?.[0]}</small></span></div>
+            <Link to="/"><Ic name="home" />View website</Link>
+            <button onClick={out}><Ic name="logout" />Sign out</button>
+          </div>
+        </aside>
+        <section className="admin-main"><ErrorGate onAuth={out}><View token={token} me={me} /></ErrorGate></section>
+      </div>
     </div>
   );
 }
