@@ -9,8 +9,10 @@ export default function Home() {
   const [campaigns, setCampaigns] = useState(null);
   const [error, setError] = useState("");
   const [hero, setHero] = useState(null);
+  const [pillars, setPillars] = useState(null);
   useEffect(() => { getPosts("campaign").then(setCampaigns).catch((e) => setError(e.message)); }, []);
   useEffect(() => { getPage("home-hero").then(setHero).catch(() => {}); }, []);
+  useEffect(() => { Promise.all([1, 2, 3, 4].map((n) => getPage(`pillar-${n}`))).then(setPillars).catch(() => {}); }, []);
 
   return (
     <>
@@ -21,13 +23,16 @@ export default function Home() {
           <p className="hero-sub">{hero ? pick(hero, "body") : t("hero_sub")}</p>
           <div className="row">
             <Link to="/join" className="btn btn-yellow">{t("join_us")}</Link>
-            <Link to="/where-we-stand" className="btn btn-ghost">{t("where_we_stand")}</Link>
+            <Link to="/donate" className="btn btn-ghost">{t("donate")}</Link>
           </div>
         </div>
       </section>
 
       <section className="pillars">
-        {[1, 2, 3, 4].map((n) => <div key={n}><h3>{t(`p${n}_t`)}</h3><p>{t(`p${n}_d`)}</p></div>)}
+        {[1, 2, 3, 4].map((n) => {
+          const p = pillars?.[n - 1];
+          return <div key={n}><h3>{p ? pick(p, "title") : t(`p${n}_t`)}</h3><p>{p ? pick(p, "intro") : t(`p${n}_d`)}</p></div>;
+        })}
       </section>
 
       <section className="section" id="subscribe">

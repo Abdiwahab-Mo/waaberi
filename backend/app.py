@@ -231,7 +231,8 @@ class Leader(db.Model):  # "Our Leadership" profiles
 
 
 PAGES = {"who-we-are": "Who We Are", "where-we-stand": "Where We Stand", "leadership": "Our Leadership",
-         "home-hero": "Waaberi Party"}
+         "home-hero": "Waaberi Party", "pillar-1": "Integrity", "pillar-2": "Education",
+         "pillar-3": "Good governance", "pillar-4": "Unity"}
 
 LANGS = ("so", "ar")  # extra languages; English lives in the main columns
 
@@ -1296,6 +1297,18 @@ PAGE_DEFAULTS = {
                           "body": "Dhisidda qaran midaysan, nabad ah oo dimuqraadi ah, iyadoo lagu salaynayo daacadnimo, waxbarasho iyo maamul wanaag."},
                    "ar": {"title": "حزب وابيري", "intro": "فجر جديد للصومال",
                           "body": "نبني أمة موحدة ومسالمة وديمقراطية من خلال النزاهة والتعليم والحكم الرشيد."}}),
+    "pillar-1": ("Transparent, accountable leadership at every level.", "",
+                 {"so": {"title": "Daacadnimo", "intro": "Hoggaan daah-furan oo la isla xisaabin karo heer kasta."},
+                  "ar": {"title": "النزاهة", "intro": "قيادة شفافة وخاضعة للمساءلة على كل المستويات."}}),
+    "pillar-2": ("Quality schooling for every child, especially girls.", "",
+                 {"so": {"title": "Waxbarasho", "intro": "Waxbarasho tayo leh oo ilmo kasta helo, gaar ahaan gabdhaha."},
+                  "ar": {"title": "التعليم", "intro": "تعليم جيد لكل طفل، وخاصة الفتيات."}}),
+    "pillar-3": ("Institutions people can trust and hold to account.", "",
+                 {"so": {"title": "Maamul wanaag", "intro": "Hay'ado dadku ku kalsoonaan karaan oo la isla xisaabin karo."},
+                  "ar": {"title": "الحكم الرشيد", "intro": "مؤسسات يثق بها الناس ويمكن مساءلتها."}}),
+    "pillar-4": ("One peaceful, democratic Somali nation.", "",
+                 {"so": {"title": "Midnimo", "intro": "Hal qaran Soomaaliyeed oo nabad ah oo dimuqraadi ah."},
+                  "ar": {"title": "الوحدة", "intro": "أمة صومالية واحدة مسالمة وديمقراطية."}}),
 }
 
 

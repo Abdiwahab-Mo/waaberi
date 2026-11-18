@@ -663,6 +663,44 @@ function PartyMembers({ token }) {
   );
 }
 
+const PILLAR_SLUGS = ["pillar-1", "pillar-2", "pillar-3", "pillar-4"];
+
+function PillarCard({ slug, token }) {
+  const [lang, setLang] = useState("en");
+  const [f, setF] = useState(null);
+  const [msg, setMsg] = useState({ ok: true, text: "" });
+  useEffect(() => { call(`/pages/${slug}`).then(setF); }, [slug]);
+  const save = async (e) => {
+    e.preventDefault();
+    try { await call(`/pages/${slug}`, { method: "PUT", body: f }, token); setMsg({ ok: true, text: "Saved." }); }
+    catch (x) { setMsg({ ok: false, text: x.message }); }
+  };
+  if (!f) return <div className="panel"><p className="muted">Loading…</p></div>;
+  return (
+    <div className="panel">
+      <LangTabs value={lang} onChange={setLang} f={f} keys={["title", "intro"]} />
+      <form className="aform" onSubmit={save}>
+        <label className="field wide"><span>Name</span><input {...tprops(lang)} value={tv(f, lang, "title")} onChange={(e) => setF(tset(f, lang, "title", e.target.value))} /></label>
+        <label className="field wide"><span>Description</span><textarea {...tprops(lang)} rows="2" value={tv(f, lang, "intro")} onChange={(e) => setF(tset(f, lang, "intro", e.target.value))} /></label>
+        <div className="wide row-l">
+          <button className="btn btn-blue small">Save</button>
+          {msg.text && <span role="status" className={msg.ok ? "ok" : "err"}>{msg.text}</span>}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function Pillars({ token }) {
+  return (
+    <>
+      <h3 style={{ marginTop: "1.5rem" }}>Homepage pillars</h3>
+      <p className="muted">The 4 value cards shown under the homepage hero.</p>
+      <div className="pillars-admin">{PILLAR_SLUGS.map((s) => <PillarCard key={s} slug={s} token={token} />)}</div>
+    </>
+  );
+}
+
 function Pages({ token }) {
   const [lang, setLang] = useState("en");
   const [slug, setSlug] = useState("who-we-are");
@@ -707,6 +745,7 @@ function Pages({ token }) {
         </div>
       )}
       {slug === "leadership" && <Leaders token={token} />}
+      {slug === "home-hero" && <Pillars token={token} />}
     </>
   );
 }
