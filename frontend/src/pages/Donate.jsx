@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { call, getPosts } from "../api.js";
 import { useLang } from "../i18n.jsx";
 
-const AMOUNTS = [1, 5, 10, 25, 50, 100]; // minimum is $1; any custom amount from $1 to $10,000
+const AMOUNTS = [0.1, 0.2, 1, 5, 10, 25, 50, 100]; // minimum is $0.10; any custom amount from $0.10 to $10,000
+const fmt = (a) => (a < 1 ? a.toFixed(2) : a); // $0.10 / $0.20, but still $1 / $5 / … for whole dollars
 const TIERS = [100, 50, 25, 10, 5, 1]; // impact line shown for the highest tier reached
 const GIFTS = [["general", "d_g_general", "d_g_general_d"], ["campaign", "d_g_campaign", "d_g_campaign_d"], ["region", "d_g_region", "d_g_region_d"]];
 
@@ -74,9 +75,9 @@ export default function Donate() {
   }, []);
 
   const value = custom ? Math.round(Number(custom) * 100) / 100 : amount;
-  const valid = value >= 1 && value <= 10000;
+  const valid = value >= 0.1 && value <= 10000;
   const tier = TIERS.find((n) => value >= n);
-  const money = `$${valid ? value.toLocaleString("en-US") : "…"}`;
+  const money = `$${valid ? (value < 1 ? value.toFixed(2) : value.toLocaleString("en-US")) : "…"}`;
   const due = `US$${valid ? value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "…"}`;
   const per = freq === "monthly" ? t("d_per_month") : "";
   const campaign = campaigns.find((c) => String(c.id) === String(campaignId));
@@ -281,9 +282,9 @@ export default function Donate() {
           <h3>{t("d_amount")}</h3>
           <div className="chips">
             {AMOUNTS.map((a) => (
-              <button key={a} type="button" className={!custom && amount === a ? "on" : ""} onClick={() => { setAmount(a); setCustom(""); }}>${a}</button>
+              <button key={a} type="button" className={!custom && amount === a ? "on" : ""} onClick={() => { setAmount(a); setCustom(""); }}>${fmt(a)}</button>
             ))}
-            <label className="chip-in"><span>$</span><input type="number" min="1" max="10000" placeholder={t("d_other")} value={custom} onChange={(e) => setCustom(e.target.value)} aria-label={t("d_other")} /></label>
+            <label className="chip-in"><span>$</span><input type="number" min="0.1" max="10000" step="0.01" placeholder={t("d_other")} value={custom} onChange={(e) => setCustom(e.target.value)} aria-label={t("d_other")} /></label>
           </div>
           {valid && tier && <p className="d-impact">✦ {t(`d_imp_${tier}`)}</p>}
           {freq === "monthly" && <p className="fine">{t("d_monthly_mm")}</p>}

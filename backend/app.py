@@ -1146,7 +1146,7 @@ def create_app():
             a = round(float(d.get("amount")), 2)
         except (TypeError, ValueError):
             return None
-        return a if 1 <= a <= 10000 else None
+        return a if 0.1 <= a <= 10000 else None
 
     def pp_base():
         return "https://api-m.paypal.com" if os.environ.get("PAYPAL_ENV") == "live" else "https://api-m.sandbox.paypal.com"
@@ -1246,7 +1246,7 @@ def create_app():
             return jsonify(error="Choose a payment method."), 400
         amount = amount_from(d)
         if amount is None:
-            return jsonify(error="Enter an amount between $1 and $10,000."), 400
+            return jsonify(error="Enter an amount between $0.10 and $10,000."), 400
         gift, err = gift_from(d)
         if err:
             return jsonify(error=err), 400
@@ -1312,7 +1312,7 @@ def create_app():
         d = request.get_json(silent=True) or {}
         amount = amount_from(d)
         if amount is None:
-            return jsonify(error="Enter an amount between $1 and $10,000."), 400
+            return jsonify(error="Enter an amount between $0.10 and $10,000."), 400
         if d.get("frequency") == "monthly":
             return jsonify(error="Monthly giving is available with mobile money. Card payments are one-time."), 400
         if not os.environ.get("PAYPAL_CLIENT_ID"):
