@@ -1279,7 +1279,7 @@ def create_app():
         what = f"Waaberi donation - {gift['target'] or 'General Fund'}"[:100]
         body = {
             "schemaVersion": "1.0", "requestId": f"wb{x.id}{uuid.uuid4().hex[:8]}",
-            "timestamp": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "channelName": "WEB",
+            "timestamp": int(time.time()), "channelName": "WEB",  # epoch seconds, as in Hormuud's sample request
             "serviceName": "API_PURCHASE",
             "serviceParams": {
                 "merchantUid": os.environ["WAAFI_MERCHANT_UID"], "apiUserId": os.environ["WAAFI_API_USER_ID"],
