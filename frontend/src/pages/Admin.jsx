@@ -21,6 +21,7 @@ const ICON_PATHS = {
   sun: "M10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z M10 2.8v1.7 M10 15.5v1.7 M3.8 10H2.1 M17.9 10h-1.7 M5.5 5.5 4.3 4.3 M15.7 15.7l-1.2-1.2 M5.5 14.5l-1.2 1.2 M15.7 4.3l-1.2 1.2",
   moon: "M16.8 12.4A6.8 6.8 0 0 1 7.6 3.2a6.8 6.8 0 1 0 9.2 9.2Z",
   chevron: "M5.5 8 10 12.5 14.5 8",
+  vote: "M4 9h12v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9Z M2.5 9h15 M7.3 12.2l1.8 1.8 3.4-3.8",
 };
 
 function Ic({ name, className }) {
@@ -182,6 +183,7 @@ const STAT_DEFS = [
   ["Campaigns", "campaigns", "Published", "megaphone", "green"],
   ["News & statements", "news", "Published", "file", "navy"],
   ["Raised (USD)", "raised", "Confirmed donations", "dollar", "gold"],
+  ["Live elections", "live_elections", "Voting open now", "vote", "green"],
 ];
 
 function Overview({ token }) {
@@ -771,11 +773,171 @@ function PaySettings({ token }) {
   );
 }
 
+const ELECTION_PHASE_LABELS = { draft: "Draft", upcoming: "Upcoming", live: "Live", closed: "Closed" };
+const ELECTION_PHASE_PILL = { draft: "anon", upcoming: "pending", live: "confirmed", closed: "anon" };
+const blankElection = { title: "", region_id: "", starts_at: "", ends_at: "" };
+
+function RegionPicker({ value, onChange }) {
+  const [countries, setCountries] = useState([]);
+  const [states, setStates] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [sel, setSel] = useState({ country: "", state: "" });
+  useEffect(() => { call("/geo/countries").then(setCountries); }, []);
+  useEffect(() => { setRegions([]); if (sel.state) call(`/geo/regions?state_id=${sel.state}`).then(setRegions); }, [sel.state]);
+  useEffect(() => { setStates([]); if (sel.country) call(`/geo/states?country_id=${sel.country}`).then(setStates); }, [sel.country]);
+  return (
+    <>
+      <label className="field"><span>Country</span>
+        <select value={sel.country} onChange={(e) => { setSel({ country: e.target.value, state: "" }); onChange(""); }}>
+          <option value="">—</option>{countries.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select></label>
+      <label className="field"><span>State</span>
+        <select value={sel.state} disabled={!sel.country} onChange={(e) => { setSel({ ...sel, state: e.target.value }); onChange(""); }}>
+          <option value="">—</option>{states.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select></label>
+      <label className="field"><span>Region</span>
+        <select value={value} disabled={!sel.state} onChange={(e) => onChange(e.target.value)}>
+          <option value="">—</option>{regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </select></label>
+    </>
+  );
+}
+
+function ElectionForm({ token, onCreated }) {
+  const [f, setF] = useState(blankElection);
+  const [msg, setMsg] = useState({ ok: true, text: "" });
+  const save = async (e) => {
+    e.preventDefault();
+    try {
+      await call("/admin/elections", { method: "POST", body: { ...f, region_id: Number(f.region_id) } }, token);
+      setMsg({ ok: true, text: "Election created as a draft. Add candidates, then publish it." });
+      setF(blankElection); onCreated();
+    } catch (x) { setMsg({ ok: false, text: x.message }); }
+  };
+  return (
+    <div className="panel">
+      <h3>New election</h3>
+      <form className="aform" onSubmit={save}>
+        <label className="field wide"><span>Title</span>
+          <input required value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="e.g. Regional Chair — Banadir" /></label>
+        <RegionPicker value={f.region_id} onChange={(v) => setF({ ...f, region_id: v })} />
+        <label className="field"><span>Opens</span><input required type="datetime-local" value={f.starts_at} onChange={(e) => setF({ ...f, starts_at: e.target.value })} /></label>
+        <label className="field"><span>Deadline</span><input required type="datetime-local" value={f.ends_at} onChange={(e) => setF({ ...f, ends_at: e.target.value })} /></label>
+        <div className="wide row-l">
+          <button className="btn btn-blue" disabled={!f.region_id}>Create draft</button>
+          {msg.text && <span role="status" className={msg.ok ? "ok" : "err"}>{msg.text}</span>}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function CandidateManager({ election, token, onChange }) {
+  const [eligible, setEligible] = useState([]);
+  const [pick, setPick] = useState("");
+  const [bio, setBio] = useState("");
+  const [err, setErr] = useState("");
+  const load = useCallback(() => call(`/admin/elections/${election.id}/eligible-candidates`, {}, token).then(setEligible), [election.id, token]);
+  useEffect(() => { load(); }, [load]);
+  const add = async (e) => {
+    e.preventDefault();
+    if (!pick) return;
+    try {
+      await call(`/admin/elections/${election.id}/candidates`, { method: "POST", body: { member_id: Number(pick), bio } }, token);
+      setPick(""); setBio(""); setErr(""); load(); onChange();
+    } catch (x) { setErr(x.message); }
+  };
+  const remove = async (cid) => {
+    if (!confirm("Remove this candidate?")) return;
+    await call(`/admin/candidates/${cid}`, { method: "DELETE" }, token); load(); onChange();
+  };
+  return (
+    <div className="panel" style={{ marginTop: ".8rem" }}>
+      <h4>Candidates</h4>
+      <ul className="geo-list">
+        {election.candidates.map((c) => (
+          <li key={c.candidate_id}><span>{c.name}</span>
+            <button type="button" className="danger small" onClick={() => remove(c.candidate_id)} aria-label={`Remove ${c.name}`}>×</button></li>
+        ))}
+        {election.candidates.length === 0 && <li className="muted">None yet. Add at least 2 to publish.</li>}
+      </ul>
+      <form onSubmit={add} className="row-l">
+        <select className="mini" value={pick} onChange={(e) => setPick(e.target.value)}>
+          <option value="">Add candidate…</option>{eligible.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+        <input placeholder="Bio (optional)" value={bio} onChange={(e) => setBio(e.target.value)} />
+        <button className="btn btn-plain small" disabled={!pick}>Add</button>
+      </form>
+      {err && <small className="err">{err}</small>}
+    </div>
+  );
+}
+
+function AdminElectionCard({ el, token, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const act = async (action, confirmMsg) => {
+    if (confirmMsg && !confirm(confirmMsg)) return;
+    setBusy(true); setMsg("");
+    try { await call(`/admin/elections/${el.id}/${action}`, { method: "POST" }, token); onChange(); }
+    catch (x) { setMsg(x.message); } finally { setBusy(false); }
+  };
+  const del = async () => {
+    if (!confirm("Delete this draft election?")) return;
+    try { await call(`/admin/elections/${el.id}`, { method: "DELETE" }, token); onChange(); } catch (x) { setMsg(x.message); }
+  };
+  return (
+    <div className="panel election-card">
+      <div className="row-l election-card-head">
+        <h3>{el.title}</h3>
+        <span className={`pill ${ELECTION_PHASE_PILL[el.phase]}`}>{ELECTION_PHASE_LABELS[el.phase]}</span>
+      </div>
+      <p className="muted">{el.region_name} · {new Date(el.starts_at).toLocaleString()} → {new Date(el.ends_at).toLocaleString()}</p>
+      <p className="muted">{el.voted}/{el.eligible} voted ({el.turnout}% turnout)</p>
+      {el.candidates.length > 0 && (
+        <div className="election-results">
+          {el.candidates.map((c) => (
+            <div className="result-row" key={c.candidate_id}>
+              <span>{c.name}{c.leading && <b className="ok"> · Leading</b>}</span>
+              <div className="result-bar"><div style={{ width: `${c.percent}%` }} /></div>
+              <span className="muted">{c.votes} ({c.percent}%)</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {el.status === "draft" && <CandidateManager election={el} token={token} onChange={onChange} />}
+      <div className="row-l" style={{ marginTop: ".8rem" }}>
+        {el.status === "draft" && <button className="btn btn-blue small" disabled={busy || el.candidates.length < 2} onClick={() => act("publish")}>Publish</button>}
+        {el.status === "draft" && <button type="button" className="btn btn-plain small" onClick={del}>Delete</button>}
+        {el.status === "published" && <button type="button" className="danger small" disabled={busy} onClick={() => act("close", "Close this election now? This can't be undone.")}>Close now</button>}
+        {msg && <span className="err">{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+function AdminElections({ token }) {
+  const [rows, setRows] = useState([]);
+  const load = useCallback(() => call("/admin/elections", {}, token).then(setRows), [token]);
+  useEffect(() => { load(); }, [load]);
+  return (
+    <>
+      <h2>Internal elections</h2>
+      <p className="muted admin-sub">Party members vote for candidates in their own region. Voting opens and closes automatically at the times you set.</p>
+      <ElectionForm token={token} onCreated={load} />
+      <div className="stack">
+        {rows.map((el) => <AdminElectionCard key={el.id} el={el} token={token} onChange={load} />)}
+        {rows.length === 0 && <p className="empty">No elections yet. Create one above.</p>}
+      </div>
+    </>
+  );
+}
+
 const ROLE = {
-  super_admin: ["Super admin", "Full access, including site pages, team and roles."],
+  super_admin: ["Super admin", "Full access, including site pages, team, roles and elections."],
   editor: ["Editor", "Publishes campaigns, news and statements."],
   finance: ["Finance", "Views and confirms donations."],
-  membership: ["Membership", "Manages members and contact messages."],
+  membership: ["Membership", "Manages members, contact messages and internal elections."],
 };
 
 function Users({ token, me }) {
@@ -859,9 +1021,10 @@ export default function Admin() {
   const can = (p) => me.permissions.includes(p);
   const tabs = [["overview", "Overview", "home"], can("pages") && ["pages", "Site pages", "layout"], can("posts") && ["posts", "Content", "megaphone"], can("members") && ["members", "Members", "users"],
     can("members") && ["party-members", "Party Members", "user-check"], can("members") && ["geo", "Geographic Areas", "map"],
+    can("elections") && ["elections", "Elections", "vote"],
     can("donations") && ["donations", "Donations", "dollar"], can("donations") && ["paysettings", "Payment settings", "card"], can("messages") && ["messages", "Messages", "mail"], can("users") && ["users", "Team & roles", "shield"]].filter(Boolean);
   const View = { overview: Overview, pages: Pages, posts: Posts, members: Members, "party-members": PartyMembers, geo: GeoAreas,
-    donations: Donations, paysettings: PaySettings, messages: Messages, users: Users }[tab] || Overview;
+    elections: AdminElections, donations: Donations, paysettings: PaySettings, messages: Messages, users: Users }[tab] || Overview;
   const initials = me.name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   return (
     <div className="admin" data-theme={theme}>

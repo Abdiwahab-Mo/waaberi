@@ -1,8 +1,123 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { changeMemberPassword, getMemberMe, getMembershipCard, memberLogin, updateMemberMe } from "../api.js";
+import { castVote, changeMemberPassword, getElectionResults, getElections, getMemberMe, getMembershipCard, memberLogin, updateMemberMe } from "../api.js";
 import Logo from "../Logo.jsx";
 import { useLang } from "../i18n.jsx";
+
+function timeLeft(target) {
+  const ms = new Date(target).getTime() - Date.now();
+  if (ms <= 0) return null;
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${s % 60}s`;
+}
+
+function ElectionResults({ eid, token, t }) {
+  const [r, setR] = useState(null);
+  useEffect(() => { getElectionResults(eid, token).then(setR).catch(() => {}); }, [eid, token]);
+  if (!r) return <p className="muted">{t("loading")}</p>;
+  return (
+    <div className="election-results">
+      <p className="muted">{t("mp_turnout")}: {r.turnout}% ({r.total_votes}/{r.eligible_members})</p>
+      {r.results.map((c) => (
+        <div className="result-row" key={c.candidate_id}>
+          <span>{c.name}{c.leading && <b className="ok"> · {t("mp_leading")}</b>}</span>
+          <div className="result-bar"><div style={{ width: `${c.percent}%` }} /></div>
+          <span className="muted">{c.votes} {t("mp_votes")} ({c.percent}%)</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ElectionCard({ el, token, t, tErr, date, onVoted }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ ok: true, text: "" });
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (el.phase !== "live") return undefined;
+    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [el.phase]);
+
+  const vote = async (c) => {
+    if (!confirm(t("mp_confirm_vote", { name: c.name }))) return;
+    setBusy(true); setMsg({ ok: true, text: "" });
+    try { await castVote(el.id, c.id, token); setMsg({ ok: true, text: t("mp_voted_thanks") }); onVoted(); }
+    catch (x) { setMsg({ ok: false, text: tErr(x.message) }); }
+    finally { setBusy(false); }
+  };
+
+  const badge = { live: ["mp_live", "confirmed"], upcoming: ["mp_upcoming", "pending"], closed: ["mp_closed_badge", "anon"] }[el.phase];
+
+  return (
+    <div className="panel election-card">
+      <div className="row-l election-card-head">
+        <h3>{el.title}</h3>
+        <span className={`pill ${badge[1]}`}>{t(badge[0])}</span>
+      </div>
+      {el.phase === "upcoming" && <p className="muted">{t("mp_starts", { date: date(el.starts_at) })}</p>}
+      {el.phase === "live" && <p className="muted">{t("mp_time_left", { time: timeLeft(el.ends_at) || "—" })}</p>}
+      {el.phase === "closed" && <p className="muted">{t("mp_ends", { date: date(el.ends_at) })}</p>}
+
+      {el.phase === "live" && !el.has_voted && (
+        <div className="election-candidates">
+          {el.candidates.map((c) => (
+            <div className="candidate-row" key={c.id}>
+              <div><b>{c.name}</b>{c.bio && <p className="muted">{c.bio}</p>}</div>
+              <button type="button" className="btn btn-blue small" disabled={busy} title={t("mp_vote_for")} onClick={() => vote(c)}>{t("mp_vote")}</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {el.phase === "live" && el.has_voted && <p className="ok">{t("mp_already_voted")}</p>}
+      {el.phase === "upcoming" && (
+        <div className="election-candidates">
+          <p className="muted">{t("mp_candidates")}: {el.candidates.map((c) => c.name).join(", ")}</p>
+        </div>
+      )}
+      {el.phase === "closed" && <ElectionResults eid={el.id} token={token} t={t} />}
+      {msg.text && <p className={msg.ok ? "ok" : "err"} role="status">{msg.text}</p>}
+    </div>
+  );
+}
+
+function ElectionsTab({ member, token, t, tErr, date }) {
+  const [data, setData] = useState(null);
+  const load = () => getElections(token).then(setData).catch(() => setData({ elections: [] }));
+  useEffect(() => { load(); }, [token]);
+  if (!member.region_id) return <><h2>{t("mp_elections")}</h2><p className="empty">{t("mp_no_region")}</p></>;
+  if (!data) return <><h2>{t("mp_elections")}</h2><p className="muted">{t("loading")}</p></>;
+  const open = data.elections.filter((e) => e.phase !== "closed");
+  return (
+    <>
+      <h2>{t("mp_elections")}</h2>
+      {open.length === 0 && <p className="empty">{t("mp_no_elections")}</p>}
+      <div className="stack">
+        {open.map((el) => <ElectionCard key={el.id} el={el} token={token} t={t} tErr={tErr} date={date} onVoted={load} />)}
+      </div>
+    </>
+  );
+}
+
+function HistoryTab({ member, token, t, date }) {
+  const [data, setData] = useState(null);
+  useEffect(() => { getElections(token).then(setData).catch(() => setData({ elections: [] })); }, [token]);
+  if (!member.region_id) return <><h2>{t("mp_history")}</h2><p className="empty">{t("mp_no_region")}</p></>;
+  if (!data) return <><h2>{t("mp_history")}</h2><p className="muted">{t("loading")}</p></>;
+  const closed = data.elections.filter((e) => e.phase === "closed" && e.has_voted);
+  return (
+    <>
+      <h2>{t("mp_history")}</h2>
+      {closed.length === 0 && <p className="empty">{t("mp_no_history")}</p>}
+      <div className="stack">
+        {closed.map((el) => <ElectionCard key={el.id} el={el} token={token} t={t} tErr={() => ""} date={date} onVoted={() => {}} />)}
+      </div>
+    </>
+  );
+}
 
 const STATUS_LABELS = { pending: "Pending", under_review: "Under review", approved: "Approved", rejected: "Rejected", suspended: "Suspended", expired: "Expired" };
 const STATUS_PILL = { pending: "pending", approved: "confirmed", rejected: "rejected", suspended: "rejected" };
@@ -156,8 +271,8 @@ const TABS = [
   ["card", "mp_card", Card],
   ["location", "mp_location", LocationTab],
   ["status", "mp_status", StatusTab],
-  ["elections", "mp_elections", ({ t }) => <><h2>{t("mp_elections")}</h2><p className="empty">{t("mp_no_elections")}</p></>],
-  ["history", "mp_history", ({ t }) => <><h2>{t("mp_history")}</h2><p className="empty">{t("mp_no_history")}</p></>],
+  ["elections", "mp_elections", ElectionsTab],
+  ["history", "mp_history", HistoryTab],
   ["notifications", "mp_notifications", ({ member, t, date }) => (
     <><h2>{t("mp_notifications")}</h2><p>{member.reviewed_at ? t("mp_approved_on", { date: date(member.reviewed_at) }) : t("mp_status_pending")}</p></>
   )],
@@ -178,15 +293,17 @@ export default function Member() {
   const [, , View] = TABS.find(([k]) => k === tab) || TABS[0];
   return (
     <div className="admin">
+      <div className="admin-body">
       <aside>
         <div className="brand"><span className="logo-tile"><Logo /></span></div>
-        <div className="chip-user"><b>{member.first_name} {member.last_name}</b><span>{member.membership_id}</span></div>
+        <div className="chip-user"><span className="avatar">{member.first_name[0]}{member.last_name[0]}</span><span className="chip-user-txt"><b>{member.first_name} {member.last_name}</b><small>{member.membership_id}</small></span></div>
         <nav className="tabs">{TABS.map(([k, labelKey]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{t(labelKey)}</button>)}</nav>
         <div className="side-foot"><Link to="/">{t("mp_view_site")}</Link><button onClick={out}>{t("mp_logout")}</button></div>
       </aside>
       <section className="admin-main">
         <View member={member} token={token} t={t} tErr={tErr} date={date} onUpdate={setMember} />
       </section>
+      </div>
     </div>
   );
 }

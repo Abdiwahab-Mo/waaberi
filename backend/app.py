@@ -137,6 +137,60 @@ class MemberLocationHistory(db.Model):  # written whenever an approved member's 
     created_at = db.Column(db.DateTime, default=dt.datetime.utcnow)
 
 
+class Election(db.Model):  # an internal party election, scoped to one region
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    region_id = db.Column(db.Integer, db.ForeignKey("region.id"), nullable=False)
+    # draft = admin is still preparing it; published = voting opens/closes by itself at the given times;
+    # closed = finished (deadline passed, or an admin closed it early). A closed election never reopens.
+    status = db.Column(db.String(10), default="draft", nullable=False, index=True)
+    starts_at = db.Column(db.DateTime, nullable=False)
+    ends_at = db.Column(db.DateTime, nullable=False)
+    closed_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=dt.datetime.utcnow)
+
+    def phase(self, now=None):
+        now = now or dt.datetime.utcnow()
+        if self.status == "draft":
+            return "draft"
+        if self.status == "closed" or self.ends_at <= now:
+            return "closed"
+        if self.starts_at > now:
+            return "upcoming"
+        return "live"
+
+    def to_dict(self, now=None):
+        now = now or dt.datetime.utcnow()
+        phase = self.phase(now)
+        # "Z" suffix: these are naive UTC datetimes, and without it browsers parse the
+        # string as local time, throwing every countdown off by the viewer's UTC offset.
+        return {"id": self.id, "title": self.title, "region_id": self.region_id, "status": self.status,
+                "phase": phase, "is_open": phase == "live",
+                "starts_at": self.starts_at.isoformat() + "Z", "ends_at": self.ends_at.isoformat() + "Z",
+                "closed_at": (self.closed_at.isoformat() + "Z") if self.closed_at else None}
+
+
+class Candidate(db.Model):  # a party member running in one election
+    id = db.Column(db.Integer, primary_key=True)
+    election_id = db.Column(db.Integer, db.ForeignKey("election.id"), nullable=False)
+    member_id = db.Column(db.Integer, db.ForeignKey("party_member.id"), nullable=False)
+    bio = db.Column(db.Text)
+    __table_args__ = (db.UniqueConstraint("election_id", "member_id"),)
+
+
+class ElectionVoter(db.Model):  # WHO voted. Primary key makes a second vote impossible.
+    election_id = db.Column(db.Integer, db.ForeignKey("election.id"), primary_key=True)
+    member_id = db.Column(db.Integer, db.ForeignKey("party_member.id"), primary_key=True)
+    voted_at = db.Column(db.DateTime, default=dt.datetime.utcnow)
+    ip = db.Column(db.String(45))
+
+
+class Ballot(db.Model):  # WHAT was voted. No member_id here, so the ballot stays secret.
+    id = db.Column(db.Integer, primary_key=True)
+    election_id = db.Column(db.Integer, db.ForeignKey("election.id"), nullable=False)
+    candidate_id = db.Column(db.Integer, db.ForeignKey("candidate.id"), nullable=False)
+
+
 class Post(db.Model):  # campaigns + news & statements
     id = db.Column(db.Integer, primary_key=True)
     kind = db.Column(db.String(20), nullable=False, index=True)  # campaign | news | statement
@@ -305,10 +359,10 @@ def add_missing_columns():
             conn.execute(text(f'ALTER TABLE "{t}" ALTER COLUMN {col} DROP NOT NULL'))
 
 ROLES = {  # role -> permissions
-    "super_admin": {"posts", "members", "messages", "donations", "users", "pages"},
+    "super_admin": {"posts", "members", "messages", "donations", "users", "pages", "elections"},
     "editor": {"posts"},
     "finance": {"donations"},
-    "membership": {"members", "messages"},
+    "membership": {"members", "messages", "elections"},
 }
 
 
@@ -762,6 +816,236 @@ def create_app():
         return jsonify(name=f"{m.first_name} {m.last_name}", membership_id=m.membership_id,
                        status=m.status, photo_url=m.photo_url)
 
+    # ---------------- Internal elections ----------------
+    def auto_close_elections():
+        """Close every published election whose deadline has passed. Runs on every request that
+        lists elections, so the database is always correct even without a cron job."""
+        Election.query.filter(Election.status == "published", Election.ends_at <= dt.datetime.utcnow()) \
+            .update({"status": "closed", "closed_at": Election.ends_at}, synchronize_session=False)
+        db.session.commit()
+
+    def candidates_for(election_id):
+        rows = (db.session.query(Candidate, PartyMember)
+                .join(PartyMember, PartyMember.id == Candidate.member_id)
+                .filter(Candidate.election_id == election_id).order_by(PartyMember.first_name).all())
+        return [{"id": c.id, "member_id": m.id, "name": f"{m.first_name} {m.last_name}", "bio": c.bio} for c, m in rows]
+
+    def candidate_results(election_id):
+        rows = (db.session.query(Candidate, PartyMember, db.func.count(Ballot.id))
+                .join(PartyMember, PartyMember.id == Candidate.member_id)
+                .outerjoin(Ballot, Ballot.candidate_id == Candidate.id)
+                .filter(Candidate.election_id == election_id)
+                .group_by(Candidate.id, PartyMember.id).order_by(PartyMember.first_name).all())
+        out = [{"candidate_id": c.id, "member_id": m.id, "name": f"{m.first_name} {m.last_name}",
+                "bio": c.bio, "votes": int(n)} for c, m, n in rows]
+        out.sort(key=lambda c: c["votes"], reverse=True)
+        total = sum(c["votes"] for c in out)
+        top = out[0]["votes"] if out else 0
+        for rank, c in enumerate(out, start=1):
+            c["rank"] = rank
+            c["percent"] = round(c["votes"] * 100 / total, 1) if total else 0
+            c["leading"] = total > 0 and c["votes"] == top
+        return out
+
+    def parse_dt(value):
+        try:
+            return dt.datetime.fromisoformat(value) if value else None
+        except (TypeError, ValueError):
+            return None
+
+    @app.get("/api/elections")
+    @member_required
+    def member_elections():
+        """Elections for the member's OWN region only (published + closed)."""
+        auto_close_elections()
+        m, now = g.member, dt.datetime.utcnow()
+        q = Election.query.filter_by(region_id=m.region_id).filter(Election.status.in_(("published", "closed")))
+        elections = q.order_by(Election.ends_at).all()
+        voted_ids = {v.election_id for v in ElectionVoter.query.filter_by(member_id=m.id)}
+        out = []
+        for el in elections:
+            item = el.to_dict(now)
+            item["has_voted"] = el.id in voted_ids
+            item["candidates"] = candidates_for(el.id)
+            out.append(item)
+        return jsonify(elections=out)
+
+    @app.post("/api/elections/<int:eid>/vote")
+    @member_required
+    def cast_vote(eid):
+        m, d = g.member, (request.get_json(silent=True) or {})
+        candidate_id = d.get("candidate_id")
+        el = db.get_or_404(Election, eid)
+        if el.region_id != m.region_id:
+            return jsonify(error="You can only vote in your own region's elections."), 403
+        phase = el.phase()
+        if phase == "upcoming":
+            return jsonify(error="Voting has not started yet."), 400
+        if phase != "live":
+            return jsonify(error="Voting is closed. The deadline has passed."), 400
+        if not Candidate.query.filter_by(id=candidate_id, election_id=eid).first():
+            return jsonify(error="Please choose a valid candidate."), 400
+        try:
+            # Primary key (election_id, member_id) makes a second vote impossible
+            db.session.add(ElectionVoter(election_id=eid, member_id=m.id,
+                                          ip=request.headers.get("X-Forwarded-For", request.remote_addr or "")))
+            db.session.add(Ballot(election_id=eid, candidate_id=candidate_id))  # secret: no member_id stored
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify(error="You have already voted in this election."), 409
+        return jsonify(ok=True), 201
+
+    @app.get("/api/elections/<int:eid>/results")
+    @member_required
+    def member_election_results(eid):
+        m = g.member
+        el = db.get_or_404(Election, eid)
+        if el.region_id != m.region_id:
+            return jsonify(error="Not found."), 404
+        if el.phase() != "closed":
+            return jsonify(error="Results will be shown after the deadline."), 403
+        results = candidate_results(eid)
+        total = sum(c["votes"] for c in results)
+        eligible = PartyMember.query.filter_by(region_id=el.region_id, status="approved").count()
+        return jsonify(election=el.to_dict(), results=results, total_votes=total, eligible_members=eligible,
+                       turnout=round(total * 100 / eligible, 1) if eligible else 0)
+
+    @app.get("/api/admin/elections")
+    @needs("elections")
+    def admin_elections():
+        auto_close_elections()
+        now = dt.datetime.utcnow()
+        q = Election.query
+        if region_id := request.args.get("region_id", type=int):
+            q = q.filter_by(region_id=region_id)
+        want_phase = request.args.get("phase")
+        out = []
+        for el in q.order_by(Election.ends_at).all():
+            item = el.to_dict(now)
+            if want_phase and item["phase"] != want_phase:
+                continue
+            voted = ElectionVoter.query.filter_by(election_id=el.id).count()
+            eligible = PartyMember.query.filter_by(region_id=el.region_id, status="approved").count()
+            item.update(region_name=db.session.get(Region, el.region_id).name, voted=voted, eligible=eligible,
+                        turnout=round(voted * 100 / eligible, 1) if eligible else 0, candidates=candidate_results(el.id))
+            out.append(item)
+        return jsonify(out)
+
+    @app.post("/api/admin/elections")
+    @needs("elections")
+    def admin_create_election():
+        d = request.get_json(silent=True) or {}
+        title = (d.get("title") or "").strip()
+        if not title:
+            return jsonify(error="Enter an election title."), 400
+        region = db.session.get(Region, d.get("region_id")) if d.get("region_id") else None
+        if not region:
+            return jsonify(error="Choose a valid region."), 400
+        starts_at, ends_at = parse_dt(d.get("starts_at")), parse_dt(d.get("ends_at"))
+        if not starts_at or not ends_at:
+            return jsonify(error="Enter a start time and a deadline."), 400
+        if ends_at <= starts_at:
+            return jsonify(error="The deadline must be after the start time."), 400
+        if ends_at <= dt.datetime.utcnow():
+            return jsonify(error="The deadline must be in the future."), 400
+        el = Election(title=title, region_id=region.id, starts_at=starts_at, ends_at=ends_at)
+        db.session.add(el); db.session.commit()
+        return jsonify(el.to_dict()), 201
+
+    @app.delete("/api/admin/elections/<int:eid>")
+    @needs("elections")
+    def admin_delete_election(eid):
+        el = db.get_or_404(Election, eid)
+        if el.status != "draft":
+            return jsonify(error="Only a draft election can be deleted."), 400
+        db.session.delete(el); db.session.commit()
+        return "", 204
+
+    @app.put("/api/admin/elections/<int:eid>/schedule")
+    @needs("elections")
+    def admin_schedule(eid):
+        el = db.get_or_404(Election, eid)
+        now = dt.datetime.utcnow()
+        phase = el.phase(now)
+        if phase == "closed":
+            return jsonify(error="This election is closed. Its time can't be changed."), 400
+        d = request.get_json(silent=True) or {}
+        starts_at = parse_dt(d.get("starts_at")) or el.starts_at
+        ends_at = parse_dt(d.get("ends_at")) or el.ends_at
+        if phase == "live":
+            if starts_at != el.starts_at:
+                return jsonify(error="Voting already started. You can only extend the deadline."), 400
+            if ends_at < el.ends_at:
+                return jsonify(error="While voting is live you can only make the deadline later. Use 'Close now' to stop early."), 400
+        if ends_at <= starts_at:
+            return jsonify(error="The deadline must be after the start time."), 400
+        if ends_at <= now:
+            return jsonify(error="The deadline must be in the future."), 400
+        el.starts_at, el.ends_at = starts_at, ends_at
+        db.session.commit()
+        return jsonify(el.to_dict())
+
+    @app.get("/api/admin/elections/<int:eid>/eligible-candidates")
+    @needs("elections")
+    def admin_eligible_candidates(eid):
+        el = db.get_or_404(Election, eid)
+        existing = {c.member_id for c in Candidate.query.filter_by(election_id=eid)}
+        members = PartyMember.query.filter_by(region_id=el.region_id, status="approved").order_by(PartyMember.first_name).all()
+        return jsonify([{"id": m.id, "name": f"{m.first_name} {m.last_name}"} for m in members if m.id not in existing])
+
+    @app.post("/api/admin/elections/<int:eid>/candidates")
+    @needs("elections")
+    def admin_add_candidate(eid):
+        el = db.get_or_404(Election, eid)
+        if el.status != "draft":
+            return jsonify(error="You can only add candidates while the election is a draft."), 400
+        d = request.get_json(silent=True) or {}
+        mem = db.session.get(PartyMember, d.get("member_id")) if d.get("member_id") else None
+        if not mem or mem.region_id != el.region_id or mem.status != "approved":
+            return jsonify(error="That member is not an approved member in this election's region."), 400
+        try:
+            db.session.add(Candidate(election_id=eid, member_id=mem.id, bio=(d.get("bio") or "").strip() or None))
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify(error="That member is already a candidate."), 409
+        return jsonify(ok=True), 201
+
+    @app.delete("/api/admin/candidates/<int:cid>")
+    @needs("elections")
+    def admin_remove_candidate(cid):
+        c = db.get_or_404(Candidate, cid)
+        el = db.get_or_404(Election, c.election_id)
+        if el.status != "draft":
+            return jsonify(error="Candidates can only be removed while the election is a draft."), 400
+        db.session.delete(c); db.session.commit()
+        return "", 204
+
+    @app.post("/api/admin/elections/<int:eid>/publish")
+    @needs("elections")
+    def admin_publish(eid):
+        el = db.get_or_404(Election, eid)
+        if el.status != "draft":
+            return jsonify(error="Only a draft election can be published."), 400
+        if el.ends_at <= dt.datetime.utcnow():
+            return jsonify(error="The deadline has already passed. Change the time first."), 400
+        if Candidate.query.filter_by(election_id=eid).count() < 2:
+            return jsonify(error="Add at least 2 candidates before publishing."), 400
+        el.status = "published"
+        db.session.commit()
+        return jsonify(el.to_dict())
+
+    @app.post("/api/admin/elections/<int:eid>/close")
+    @needs("elections")
+    def admin_close(eid):
+        el = db.get_or_404(Election, eid)
+        if el.status != "published":
+            return jsonify(error="Only a published election can be closed."), 400
+        el.status, el.closed_at = "closed", dt.datetime.utcnow()
+        db.session.commit()
+        return jsonify(el.to_dict())
+
     @app.post("/api/contact")
     def contact():
         d = request.get_json(silent=True) or {}
@@ -850,6 +1134,10 @@ def create_app():
             out["news"] = Post.query.filter(Post.kind != "campaign").count()
         if "donations" in can:
             out["raised"] = float(db.session.query(db.func.coalesce(db.func.sum(Donation.amount), 0)).filter_by(status="confirmed").scalar())
+        if "elections" in can:
+            out["live_elections"] = Election.query.filter(
+                Election.status == "published", Election.starts_at <= dt.datetime.utcnow(), Election.ends_at > dt.datetime.utcnow()
+            ).count()
         return jsonify(out)
 
     # ---------------- Donations ----------------

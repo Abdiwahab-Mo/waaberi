@@ -22,6 +22,9 @@ export const getMembershipCard = (token) => call("/members/me/card", {}, token);
 export const verifyMember = (token) => call(`/members/verify/${token}`);
 export const sendContact = (body) => call("/contact", { method: "POST", body });
 export const login = (body) => call("/auth/login", { method: "POST", body });
+export const getElections = (token) => call("/elections", {}, token);
+export const castVote = (eid, candidate_id, token) => call(`/elections/${eid}/vote`, { method: "POST", body: { candidate_id } }, token);
+export const getElectionResults = (eid, token) => call(`/elections/${eid}/results`, {}, token);
 export const uploadImage = async (file, token) => {
   const fd = new FormData(); fd.append("file", file);
   const res = await fetch("/api/uploads", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
